@@ -1,0 +1,32 @@
+# VoiceType Configuration Example
+# Copy this file to %APPDATA%/VoiceType/config.yaml
+
+# Audio settings
+audio:
+  microphone_id: "default"          # Microphone ID or "default"
+  language: "ru"                     # "ru" or "en"
+  model: "small"                     # "small" or "large"
+  vad_sensitivity: 0.5               # 0.0 - 1.0
+
+# Recognition settings
+recognition:
+  punctuation_enabled: true          # Auto-punctuation via Silero TE
+
+# Output settings
+output:
+  mode: "keyboard"                   # "keyboard" or "clipboard"
+
+# Hotkeys
+hotkeys:
+  start_recording: "ctrl+shift+s"
+  stop_recording: "ctrl+shift+x"
+
+# System settings
+system:
+  autostart: false                   # Start with Windows
+  theme: "dark"                      # "dark" or "light"
+
+# Internal settings (not shown in UI)
+internal:
+  first_run: true
+  window_geometry: null

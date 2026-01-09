@@ -1,0 +1,98 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# mypy
+.mypy_cache/
+
+# Logs
+*.log
+logs/
+
+# Models (large files - download separately)
+voicetype/models/vosk-model-*/
+voicetype/models/silero-te/*.pt
+voicetype/models/silero-te/*.pkl
+!voicetype/models/.gitkeep
+
+# User data
+*.db
+*.sqlite
+*.sqlite3
+config.yaml
+
+# Build artifacts (PyInstaller output)
+voicetype/build/voicetype/
+voicetype/dist/
+
+# Build logs
+build_log.txt
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.DS_Store
+Thumbs.db
+
+# Test files
+test_*.py
+!voicetype/tests/test_*.py
+
+# Lock files (single instance)
+*.lock
+
+# Claude Code artifacts
+.claude/
+Artifacts/
+
+# Windows null device artifact
+nul

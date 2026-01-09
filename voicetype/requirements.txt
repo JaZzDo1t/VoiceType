@@ -1,0 +1,16 @@
+# Core
+vosk>=0.3.45
+torch>=2.0.0
+pyaudio>=0.2.14
+
+# UI
+PyQt6>=6.6.0
+
+# System integration
+pynput>=1.7.6
+pyperclip>=1.8.2
+
+# Utils
+psutil>=5.9.0
+PyYAML>=6.0.0
+loguru>=0.7.0
