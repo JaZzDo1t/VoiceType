@@ -207,6 +207,36 @@ class VoiceTypeApp(QObject):
 
         logger.debug("Models unloaded, memory freed")
 
+    def _load_vosk_model(self) -> tuple[bool, str]:
+        """
+        Загрузить модель Vosk.
+
+        Returns:
+            Tuple (success, model_name)
+        """
+        language = self._config.get("audio.language", "ru")
+        model_size = self._config.get("audio.model", "small")
+
+        model_path = self._models_manager.get_vosk_model_path(language, model_size)
+        model_name = model_path.name if model_path else f"{language}/{model_size}"
+
+        if not model_path:
+            logger.error(f"Model not found: {language}/{model_size}")
+            return False, model_name
+
+        # Обновляем статус загрузки
+        self._loading_status_signal.emit("Загрузка Vosk", model_name)
+
+        # Загружаем Vosk
+        self._recognizer = Recognizer(str(model_path))
+        self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
+        self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
+
+        if not self._recognizer.load_model():
+            return False, model_name
+
+        return True, model_name
+
     def _load_models_async(self):
         """Загрузить модели в фоновом потоке."""
         def load():
@@ -214,31 +244,14 @@ class VoiceTypeApp(QObject):
                 # Выгружаем старые модели перед загрузкой новых
                 self._unload_models()
 
-                # Получаем путь к модели
-                language = self._config.get("audio.language", "ru")
-                model_size = self._config.get("audio.model", "small")
-
-                model_path = self._models_manager.get_vosk_model_path(language, model_size)
-                model_name = model_path.name if model_path else f"{language}/{model_size}"
-
-                if not model_path:
-                    logger.error(f"Model not found: {language}/{model_size}")
-                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
-                    return
-
-                # Обновляем статус загрузки
-                self._loading_status_signal.emit("Загрузка Vosk", model_name)
-
                 # Загружаем Vosk
-                self._recognizer = Recognizer(str(model_path))
-                self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
-                self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
-
-                if not self._recognizer.load_model():
+                success, model_name = self._load_vosk_model()
+                if not success:
                     self._models_loaded_signal.emit(TRAY_STATE_ERROR, model_name)
                     return
 
                 # Загружаем пунктуацию если включена
+                language = self._config.get("audio.language", "ru")
                 if self._config.get("recognition.punctuation_enabled", True):
                     self._loading_status_signal.emit("Загрузка Silero TE", model_name)
                     try:
@@ -278,27 +291,9 @@ class VoiceTypeApp(QObject):
 
                 gc.collect()
 
-                # Получаем путь к модели
-                language = self._config.get("audio.language", "ru")
-                model_size = self._config.get("audio.model", "small")
-
-                model_path = self._models_manager.get_vosk_model_path(language, model_size)
-                model_name = model_path.name if model_path else f"{language}/{model_size}"
-
-                if not model_path:
-                    logger.error(f"Model not found: {language}/{model_size}")
-                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
-                    return
-
-                # Обновляем статус загрузки
-                self._loading_status_signal.emit("Загрузка Vosk", model_name)
-
                 # Загружаем Vosk
-                self._recognizer = Recognizer(str(model_path))
-                self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
-                self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
-
-                if not self._recognizer.load_model():
+                success, model_name = self._load_vosk_model()
+                if not success:
                     self._models_loaded_signal.emit(TRAY_STATE_ERROR, model_name)
                     return
 

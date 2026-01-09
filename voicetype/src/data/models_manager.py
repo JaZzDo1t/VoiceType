@@ -3,6 +3,7 @@ VoiceType - Models Manager
 Управление моделями распознавания речи (Vosk) и пунктуации (Silero TE).
 """
 import sys
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger
@@ -256,13 +257,16 @@ class ModelsManager:
             return False
 
 
-# Глобальный экземпляр
+# Глобальный экземпляр (thread-safe singleton)
 _models_manager: Optional[ModelsManager] = None
+_models_lock = threading.Lock()
 
 
 def get_models_manager() -> ModelsManager:
-    """Получить глобальный экземпляр ModelsManager."""
+    """Получить глобальный экземпляр ModelsManager (thread-safe singleton)."""
     global _models_manager
     if _models_manager is None:
-        _models_manager = ModelsManager()
+        with _models_lock:
+            if _models_manager is None:
+                _models_manager = ModelsManager()
     return _models_manager

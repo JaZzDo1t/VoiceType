@@ -56,3 +56,13 @@ OUTPUT_MODE_CLIPBOARD = "clipboard"
 # Themes
 THEME_DARK = "dark"
 THEME_LIGHT = "light"
+
+# Output timing
+DEFAULT_TYPING_DELAY = 0.01  # Задержка между символами (секунды)
+LAYOUT_SWITCH_DELAY = 0.1   # Задержка после смены раскладки (секунды)
+
+# Hotkeys
+HOTKEY_DEBOUNCE_INTERVAL = 0.3  # Интервал debounce для хоткеев (секунды)
+
+# UI sizes
+MIC_COMBO_MIN_WIDTH = 250  # Минимальная ширина комбобокса микрофона

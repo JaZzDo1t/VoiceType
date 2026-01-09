@@ -3,6 +3,7 @@ VoiceType - Database Manager
 SQLite база данных для истории распознавания и статистики.
 """
 import sqlite3
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -279,15 +280,18 @@ class Database:
             return row["total"] if row else 0
 
 
-# Глобальный экземпляр БД
+# Глобальный экземпляр БД (thread-safe singleton)
 _db_instance: Optional[Database] = None
+_db_lock = threading.Lock()
 
 
 def get_database() -> Database:
-    """Получить глобальный экземпляр БД (singleton)."""
+    """Получить глобальный экземпляр БД (thread-safe singleton)."""
     global _db_instance
     if _db_instance is None:
-        _db_instance = Database()
+        with _db_lock:
+            if _db_instance is None:
+                _db_instance = Database()
     return _db_instance
 
 
