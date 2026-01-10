@@ -302,11 +302,13 @@ class LazyModelManager(QObject):
             logger.debug("Auto-unload timer cancelled")
 
     def _on_auto_unload_timeout(self) -> None:
-        """Callback таймера автовыгрузки - выгружаем пунктуацию для экономии RAM."""
-        logger.info("Auto-unload timeout reached, unloading punctuation model...")
+        """Callback таймера автовыгрузки - выгружаем все модели для экономии RAM."""
+        logger.info("Auto-unload timeout reached, unloading all models...")
+        # Сигналим app.py чтобы выгрузил свои экземпляры моделей
+        self.vosk_status_changed.emit(False, "")
         self.unload_punctuation()
         gc.collect()
-        logger.info("Punctuation model unloaded, RAM freed")
+        logger.info("All models unloaded, RAM freed (~400 MB)")
 
     # === Utility Methods ===
 

@@ -7,6 +7,7 @@ import gc
 import threading
 import queue
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
@@ -78,6 +79,7 @@ class VoiceTypeApp(QObject):
         self._recognition_thread: Optional[threading.Thread] = None
         self._session_text = ""
         self._session_start: Optional[datetime] = None
+        self._vosk_model_path: Optional[str] = None  # Путь к модели Vosk для перезагрузки
 
         # Таймеры
         self._stats_timer: Optional[QTimer] = None
@@ -232,11 +234,14 @@ class VoiceTypeApp(QObject):
             logger.error(f"Model not found: {language}/{model_size}")
             return False, model_name
 
+        # Сохраняем путь для перезагрузки
+        self._vosk_model_path = str(model_path)
+
         # Обновляем статус загрузки
         self._loading_status_signal.emit("Загрузка Vosk", model_name)
 
         # Загружаем Vosk
-        self._recognizer = Recognizer(str(model_path))
+        self._recognizer = Recognizer(self._vosk_model_path)
         self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
         self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
 
@@ -432,9 +437,9 @@ class VoiceTypeApp(QObject):
             logger.warning("Already recording")
             return
 
-        if not self._models_loaded or not self._recognizer or not self._recognizer.is_loaded():
+        # Если модели ещё ни разу не загружались - ждём
+        if not self._models_loaded:
             logger.warning("Models not loaded yet, ignoring start_recording")
-            # Не показываем уведомление если модели ещё грузятся - это нормально
             return
 
         logger.info("Starting recording...")
@@ -442,6 +447,24 @@ class VoiceTypeApp(QObject):
         # Отменяем таймер автовыгрузки если запущен
         if self._lazy_model_manager:
             self._lazy_model_manager.cancel_auto_unload_timer()
+
+            # Загружаем Vosk если был выгружен
+            if not self._recognizer or not self._recognizer.is_loaded():
+                if self._vosk_model_path:
+                    logger.info("Loading Vosk model for recording...")
+                    self._recognizer = Recognizer(self._vosk_model_path)
+                    self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
+                    self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
+                    if self._recognizer.load_model():
+                        logger.info("Vosk model loaded")
+                        self._main_window.tab_main.set_vosk_status(True, Path(self._vosk_model_path).name)
+                    else:
+                        logger.error("Failed to load Vosk model")
+                        self._tray_icon.show_notification("Ошибка", "Не удалось загрузить модель")
+                        return
+                else:
+                    logger.error("No Vosk model path saved")
+                    return
 
             # Загружаем пунктуацию если была выгружена
             if not self._lazy_model_manager.is_punctuation_loaded():
@@ -613,7 +636,6 @@ class VoiceTypeApp(QObject):
             # Запускаем таймер автовыгрузки моделей для экономии RAM
             if self._lazy_model_manager:
                 self._lazy_model_manager.start_auto_unload_timer(timeout_sec=30)
-                logger.debug("Auto-unload timer started (30s)")
 
             # Показываем уведомление о готовности
             self._tray_icon.show_notification(
@@ -643,6 +665,11 @@ class VoiceTypeApp(QObject):
 
     def _on_vosk_status_changed(self, loaded: bool, model_name: str):
         """Обработчик изменения статуса Vosk модели (от LazyModelManager)."""
+        if not loaded and self._recognizer:
+            # Выгружаем recognizer при автовыгрузке
+            self._recognizer.unload()
+            self._recognizer = None
+            logger.info("Vosk recognizer unloaded via auto-unload")
         self._main_window.tab_main.set_vosk_status(loaded, model_name)
         logger.debug(f"Vosk status changed: loaded={loaded}, name={model_name}")
 
