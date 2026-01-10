@@ -1,0 +1,25 @@
+# VoiceType dependencies (CPU-only version)
+# ============================================
+#
+# NOTE: Install torch separately with CPU-only build:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# This reduces the PyTorch installation from ~2.5GB to ~200MB
+# and the final build from ~450MB to ~200MB
+
+# Core
+vosk>=0.3.45,<1.0.0
+pyaudio>=0.2.14
+numpy>=1.20.0,<2.0.0
+
+# UI
+PyQt6>=6.6.0,<7.0.0
+
+# System integration
+pynput>=1.7.6,<2.0.0
+pyperclip>=1.8.2,<2.0.0
+
+# Utils
+psutil>=5.9.0,<6.0.0
+PyYAML>=6.0.0,<7.0.0
+loguru>=0.7.0,<1.0.0
