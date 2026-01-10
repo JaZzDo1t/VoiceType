@@ -96,3 +96,5 @@ Artifacts/
 
 # Windows null device artifact
 nul
+/build
+/voicetype/build
