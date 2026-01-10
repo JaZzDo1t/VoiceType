@@ -17,9 +17,9 @@ output:
   mode: "keyboard"                   # "keyboard" or "clipboard"
 
 # Hotkeys
+# Toggle hotkey - one button for start/stop recording
 hotkeys:
-  start_recording: "ctrl+shift+s"
-  stop_recording: "ctrl+shift+x"
+  toggle_recording: "ctrl+shift+s"
 
 # System settings
 system:

@@ -36,11 +36,11 @@ def setup_logger(log_dir: Path = None) -> None:
         )
 
     # Добавляем файловый handler
-    # Ограничение: ~200 записей (примерно 50KB), хранить 1 бэкап
+    # Ограничение: ~200 записей (~20KB), без бэкапов - просто перезаписывать
     logger.add(
         log_dir / f"{APP_NAME.lower()}.log",
-        rotation="50 KB",  # Ротация при достижении 50KB (~200-300 записей)
-        retention=1,  # Хранить только 1 старый файл
+        rotation="20 KB",  # Ротация при ~200 строках
+        retention=0,  # Не хранить старые файлы, просто перезаписывать
         format="{time:HH:mm:ss} [{level}] {message}",
         level="DEBUG",
         encoding="utf-8"

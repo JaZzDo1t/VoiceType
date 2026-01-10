@@ -3,6 +3,7 @@ VoiceType - Configuration Manager
 Управление конфигурацией приложения через YAML.
 """
 import copy
+import threading
 from pathlib import Path
 from typing import Any, Optional
 import yaml
@@ -10,7 +11,7 @@ from loguru import logger
 
 from src.utils.constants import (
     CONFIG_FILE, APP_DATA_DIR,
-    DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP,
+    DEFAULT_HOTKEY_TOGGLE,
     THEME_DARK, OUTPUT_MODE_KEYBOARD
 )
 
@@ -30,8 +31,8 @@ DEFAULT_CONFIG = {
         "mode": OUTPUT_MODE_KEYBOARD
     },
     "hotkeys": {
-        "start_recording": DEFAULT_HOTKEY_START,
-        "stop_recording": DEFAULT_HOTKEY_STOP
+        # Toggle hotkey - одна кнопка для старт/стоп записи
+        "toggle_recording": DEFAULT_HOTKEY_TOGGLE
     },
     "system": {
         "autostart": False,
@@ -172,15 +173,18 @@ class Config:
         return self._config.copy()
 
 
-# Глобальный экземпляр конфига
+# Глобальный экземпляр конфига (thread-safe singleton)
 _config_instance: Optional[Config] = None
+_config_lock = threading.Lock()
 
 
 def get_config() -> Config:
-    """Получить глобальный экземпляр конфига (singleton)."""
+    """Получить глобальный экземпляр конфига (thread-safe singleton)."""
     global _config_instance
     if _config_instance is None:
-        _config_instance = Config()
+        with _config_lock:
+            if _config_instance is None:
+                _config_instance = Config()
     return _config_instance
 
 

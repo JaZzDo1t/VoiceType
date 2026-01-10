@@ -33,7 +33,7 @@ from src.utils.constants import (
     THEME_DARK, THEME_LIGHT, APP_NAME,
     TRAY_STATE_READY, TRAY_STATE_RECORDING, TRAY_STATE_LOADING, TRAY_STATE_ERROR,
     OUTPUT_MODE_KEYBOARD, OUTPUT_MODE_CLIPBOARD,
-    DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP
+    DEFAULT_HOTKEY_TOGGLE
 )
 
 
@@ -62,8 +62,7 @@ def mock_config():
         "output.mode": OUTPUT_MODE_KEYBOARD,
         "system.autostart": False,
         "system.theme": THEME_DARK,
-        "hotkeys.start_recording": DEFAULT_HOTKEY_START,
-        "hotkeys.stop_recording": DEFAULT_HOTKEY_STOP,
+        "hotkeys.toggle_recording": DEFAULT_HOTKEY_TOGGLE,
         "internal.window_geometry": None,
     }
 
@@ -486,16 +485,15 @@ class TestTabHotkeys:
 
             tab.deleteLater()
 
-    def test_get_hotkeys(self, qapp, mock_config):
-        """Test getting hotkey values."""
+    def test_get_hotkey(self, qapp, mock_config):
+        """Test getting toggle hotkey value."""
         with patch('src.ui.tabs.tab_hotkeys.get_config', return_value=mock_config):
             from src.ui.tabs.tab_hotkeys import TabHotkeys
 
             tab = TabHotkeys()
 
-            # Should return default hotkeys
-            assert tab.get_start_hotkey() == DEFAULT_HOTKEY_START
-            assert tab.get_stop_hotkey() == DEFAULT_HOTKEY_STOP
+            # Should return default toggle hotkey
+            assert tab.get_toggle_hotkey() == DEFAULT_HOTKEY_TOGGLE
 
             tab.deleteLater()
 

@@ -11,18 +11,18 @@ from loguru import logger
 
 from src.data.config import get_config
 from src.ui.widgets.hotkey_edit import HotkeyEdit
-from src.utils.constants import DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP
+from src.utils.constants import DEFAULT_HOTKEY_TOGGLE
 
 
 class TabHotkeys(QWidget):
     """
     Вкладка 'Хоткеи'.
     Настройка горячих клавиш для управления записью.
+    Используется один toggle хоткей для старт/стоп записи.
     """
 
     # Сигналы
-    start_hotkey_changed = pyqtSignal(str)
-    stop_hotkey_changed = pyqtSignal(str)
+    toggle_hotkey_changed = pyqtSignal(str)
     hotkeys_reset = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -39,7 +39,8 @@ class TabHotkeys(QWidget):
 
         # Описание
         description = QLabel(
-            "Настройте глобальные горячие клавиши для управления записью.\n"
+            "Настройте глобальную горячую клавишу для управления записью.\n"
+            "Одна клавиша для старта и остановки записи (toggle).\n"
             "Горячие клавиши работают даже когда приложение не в фокусе."
         )
         description.setObjectName("secondaryLabel")
@@ -47,31 +48,20 @@ class TabHotkeys(QWidget):
         layout.addWidget(description)
 
         # Секция ГОРЯЧИЕ КЛАВИШИ
-        hotkeys_group = QGroupBox("ГОРЯЧИЕ КЛАВИШИ")
+        hotkeys_group = QGroupBox("ГОРЯЧАЯ КЛАВИША ЗАПИСИ")
         hotkeys_layout = QVBoxLayout(hotkeys_group)
         hotkeys_layout.setSpacing(16)
 
-        # Начать запись
-        start_layout = QHBoxLayout()
-        start_label = QLabel("Начать запись:")
-        start_label.setMinimumWidth(150)
-        start_layout.addWidget(start_label)
+        # Toggle запись (старт/стоп одной кнопкой)
+        toggle_layout = QHBoxLayout()
+        toggle_label = QLabel("Запись (старт/стоп):")
+        toggle_label.setMinimumWidth(150)
+        toggle_layout.addWidget(toggle_label)
 
-        self._start_hotkey = HotkeyEdit()
-        start_layout.addWidget(self._start_hotkey)
-        start_layout.addStretch()
-        hotkeys_layout.addLayout(start_layout)
-
-        # Остановить запись
-        stop_layout = QHBoxLayout()
-        stop_label = QLabel("Остановить запись:")
-        stop_label.setMinimumWidth(150)
-        stop_layout.addWidget(stop_label)
-
-        self._stop_hotkey = HotkeyEdit()
-        stop_layout.addWidget(self._stop_hotkey)
-        stop_layout.addStretch()
-        hotkeys_layout.addLayout(stop_layout)
+        self._toggle_hotkey = HotkeyEdit()
+        toggle_layout.addWidget(self._toggle_hotkey)
+        toggle_layout.addStretch()
+        hotkeys_layout.addLayout(toggle_layout)
 
         layout.addWidget(hotkeys_group)
 
@@ -99,53 +89,32 @@ class TabHotkeys(QWidget):
 
     def _load_settings(self):
         """Загрузить настройки из конфига."""
-        start_hotkey = self._config.get("hotkeys.start_recording", DEFAULT_HOTKEY_START)
-        stop_hotkey = self._config.get("hotkeys.stop_recording", DEFAULT_HOTKEY_STOP)
-
-        self._start_hotkey.set_hotkey(start_hotkey)
-        self._stop_hotkey.set_hotkey(stop_hotkey)
+        toggle_hotkey = self._config.get("hotkeys.toggle_recording", DEFAULT_HOTKEY_TOGGLE)
+        self._toggle_hotkey.set_hotkey(toggle_hotkey)
 
     def _connect_signals(self):
         """Подключить сигналы."""
-        self._start_hotkey.hotkey_changed.connect(self._on_start_hotkey_changed)
-        self._stop_hotkey.hotkey_changed.connect(self._on_stop_hotkey_changed)
+        self._toggle_hotkey.hotkey_changed.connect(self._on_toggle_hotkey_changed)
         self._reset_btn.clicked.connect(self._on_reset_clicked)
 
-    def _on_start_hotkey_changed(self, hotkey: str):
-        """Обработчик изменения хоткея старта."""
+    def _on_toggle_hotkey_changed(self, hotkey: str):
+        """Обработчик изменения toggle хоткея."""
         if hotkey:
-            self._config.set("hotkeys.start_recording", hotkey)
-            self.start_hotkey_changed.emit(hotkey)
-            logger.info(f"Start hotkey changed: {hotkey}")
-
-    def _on_stop_hotkey_changed(self, hotkey: str):
-        """Обработчик изменения хоткея стопа."""
-        if hotkey:
-            self._config.set("hotkeys.stop_recording", hotkey)
-            self.stop_hotkey_changed.emit(hotkey)
-            logger.info(f"Stop hotkey changed: {hotkey}")
+            self._config.set("hotkeys.toggle_recording", hotkey)
+            self.toggle_hotkey_changed.emit(hotkey)
+            logger.info(f"Toggle hotkey changed: {hotkey}")
 
     def _on_reset_clicked(self):
-        """Сбросить хоткеи по умолчанию."""
-        self._config.set("hotkeys.start_recording", DEFAULT_HOTKEY_START)
-        self._config.set("hotkeys.stop_recording", DEFAULT_HOTKEY_STOP)
-
-        self._start_hotkey.set_hotkey(DEFAULT_HOTKEY_START)
-        self._stop_hotkey.set_hotkey(DEFAULT_HOTKEY_STOP)
-
-        self.start_hotkey_changed.emit(DEFAULT_HOTKEY_START)
-        self.stop_hotkey_changed.emit(DEFAULT_HOTKEY_STOP)
+        """Сбросить хоткей по умолчанию."""
+        self._config.set("hotkeys.toggle_recording", DEFAULT_HOTKEY_TOGGLE)
+        self._toggle_hotkey.set_hotkey(DEFAULT_HOTKEY_TOGGLE)
+        self.toggle_hotkey_changed.emit(DEFAULT_HOTKEY_TOGGLE)
         self.hotkeys_reset.emit()
+        logger.info("Toggle hotkey reset to default")
 
-        logger.info("Hotkeys reset to defaults")
-
-    def get_start_hotkey(self) -> str:
-        """Получить хоткей старта."""
-        return self._start_hotkey.get_hotkey()
-
-    def get_stop_hotkey(self) -> str:
-        """Получить хоткей стопа."""
-        return self._stop_hotkey.get_hotkey()
+    def get_toggle_hotkey(self) -> str:
+        """Получить toggle хоткей."""
+        return self._toggle_hotkey.get_hotkey()
 
     def refresh(self):
         """Обновить вкладку."""

@@ -6,7 +6,10 @@ import time
 from typing import Optional
 from loguru import logger
 
-from src.utils.constants import OUTPUT_MODE_KEYBOARD, OUTPUT_MODE_CLIPBOARD
+from src.utils.constants import (
+    OUTPUT_MODE_KEYBOARD, OUTPUT_MODE_CLIPBOARD,
+    DEFAULT_TYPING_DELAY, LAYOUT_SWITCH_DELAY
+)
 
 
 class OutputManager:
@@ -24,7 +27,7 @@ class OutputManager:
         self._mode = mode
         self._language = language
         self._keyboard_controller = None
-        self._typing_delay = 0.01  # Задержка между символами (секунды)
+        self._typing_delay = DEFAULT_TYPING_DELAY
 
     @property
     def mode(self) -> str:
@@ -93,8 +96,8 @@ class OutputManager:
             # Переключаем раскладку на нужный язык
             self._switch_keyboard_layout(self._language)
 
-            # Задержка после смены раскладки (100мс для надёжности)
-            time.sleep(0.1)
+            # Задержка после смены раскладки для надёжности
+            time.sleep(LAYOUT_SWITCH_DELAY)
 
             # Печатаем текст
             self._keyboard_controller.type(text)
@@ -165,34 +168,6 @@ class OutputManager:
             logger.warning(f"Failed to switch keyboard layout: {e}")
             return False
 
-    def output_to_keyboard_slow(self, text: str) -> bool:
-        """
-        Медленная эмуляция набора (посимвольно).
-        Используется для проблемных приложений.
-
-        Args:
-            text: Текст для набора
-
-        Returns:
-            True если успешно
-        """
-        try:
-            from pynput.keyboard import Controller
-
-            if self._keyboard_controller is None:
-                self._keyboard_controller = Controller()
-
-            for char in text:
-                self._keyboard_controller.type(char)
-                time.sleep(self._typing_delay)
-
-            logger.debug(f"Typed slowly to keyboard: {text[:50]}...")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to type text slowly: {e}")
-            return False
-
     def output_to_clipboard(self, text: str) -> bool:
         """
         Копировать текст в буфер обмена.
@@ -218,71 +193,3 @@ class OutputManager:
         except Exception as e:
             logger.error(f"Failed to copy to clipboard: {e}")
             return False
-
-    def output_to_clipboard_and_paste(self, text: str) -> bool:
-        """
-        Копировать в буфер и вставить (Ctrl+V).
-        Альтернативный метод вывода.
-
-        Args:
-            text: Текст
-
-        Returns:
-            True если успешно
-        """
-        try:
-            import pyperclip
-            from pynput.keyboard import Controller, Key
-
-            # Копируем в буфер
-            pyperclip.copy(text)
-
-            # Эмулируем Ctrl+V
-            if self._keyboard_controller is None:
-                self._keyboard_controller = Controller()
-
-            with self._keyboard_controller.pressed(Key.ctrl):
-                self._keyboard_controller.tap('v')
-
-            logger.debug(f"Pasted from clipboard: {text[:50]}...")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to paste from clipboard: {e}")
-            return False
-
-    def set_typing_delay(self, delay: float) -> None:
-        """
-        Установить задержку между символами для медленного набора.
-
-        Args:
-            delay: Задержка в секундах (0.01 - 0.1)
-        """
-        self._typing_delay = max(0.001, min(0.5, delay))
-
-    def clear_clipboard(self) -> bool:
-        """
-        Очистить буфер обмена.
-
-        Returns:
-            True если успешно
-        """
-        try:
-            import pyperclip
-            pyperclip.copy("")
-            return True
-        except Exception:
-            return False
-
-    def get_clipboard(self) -> Optional[str]:
-        """
-        Получить текст из буфера обмена.
-
-        Returns:
-            Текст или None
-        """
-        try:
-            import pyperclip
-            return pyperclip.paste()
-        except Exception:
-            return None

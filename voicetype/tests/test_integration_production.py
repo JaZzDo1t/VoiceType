@@ -417,11 +417,23 @@ class TestHotkeyManagerIntegration:
         """Тест парсинга хоткеев."""
         from src.core.hotkey_manager import HotkeyManager
 
-        modifiers, key = HotkeyManager.parse_hotkey("ctrl+shift+s")
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("ctrl+shift+s")
 
         assert "ctrl" in modifiers
         assert "shift" in modifiers
-        assert key == "s"
+        assert "s" in regular_keys
+
+        # Тест комбинации без модификаторов (a+b)
+        modifiers2, regular_keys2 = HotkeyManager.parse_hotkey("a+b")
+        assert len(modifiers2) == 0
+        assert "a" in regular_keys2
+        assert "b" in regular_keys2
+
+        # Тест смешанной комбинации (ctrl+a+b)
+        modifiers3, regular_keys3 = HotkeyManager.parse_hotkey("ctrl+a+b")
+        assert "ctrl" in modifiers3
+        assert "a" in regular_keys3
+        assert "b" in regular_keys3
 
 
 class TestOutputManagerIntegration:

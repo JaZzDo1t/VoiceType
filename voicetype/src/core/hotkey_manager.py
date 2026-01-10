@@ -8,7 +8,7 @@ import time
 from typing import Dict, Callable, Optional, Set, Tuple
 from loguru import logger
 
-from src.utils.constants import DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP
+from src.utils.constants import DEFAULT_HOTKEY_TOGGLE
 
 # Debounce interval in seconds
 HOTKEY_DEBOUNCE_INTERVAL = 0.3  # 300ms
@@ -33,21 +33,34 @@ class HotkeyManager:
         self._last_trigger_time: Dict[str, float] = {}
 
     @staticmethod
-    def parse_hotkey(hotkey_str: str) -> Tuple[Set[str], str]:
+    def parse_hotkey(hotkey_str: str) -> Tuple[Set[str], Set[str]]:
         """
         Распарсить строку хоткея в компоненты.
 
+        Поддерживает как классические комбинации с модификаторами (ctrl+shift+s),
+        так и комбинации обычных клавиш (a+b, 3+5).
+
         Args:
-            hotkey_str: Строка вида "ctrl+shift+s"
+            hotkey_str: Строка вида "ctrl+shift+s" или "a+b"
 
         Returns:
-            (modifiers, key) - множество модификаторов и основная клавиша
+            (modifiers, regular_keys) - множество модификаторов и множество обычных клавиш
         """
         parts = hotkey_str.lower().replace(" ", "").split("+")
 
-        # Модификаторы
+        # Имена модификаторов
         modifier_names = {"ctrl", "control", "alt", "shift", "cmd", "win", "super"}
-        modifiers = {p for p in parts[:-1] if p in modifier_names}
+
+        # Разделяем на модификаторы и обычные клавиши
+        modifiers = set()
+        regular_keys = set()
+
+        for part in parts:
+            if part in modifier_names:
+                modifiers.add(part)
+            else:
+                # Обычная клавиша (буква, цифра, символ)
+                regular_keys.add(part)
 
         # Нормализуем названия модификаторов
         normalized_modifiers = set()
@@ -59,29 +72,33 @@ class HotkeyManager:
             else:
                 normalized_modifiers.add(mod)
 
-        # Основная клавиша (последняя)
-        key = parts[-1] if parts else ""
-
-        return normalized_modifiers, key
+        return normalized_modifiers, regular_keys
 
     @staticmethod
     def normalize_hotkey(hotkey_str: str) -> str:
         """
         Нормализовать строку хоткея.
 
+        Поддерживает как классические комбинации (Ctrl+Shift+S),
+        так и комбинации обычных клавиш (A+B, 3+5).
+
         Args:
-            hotkey_str: "Ctrl + Shift + S" или "ctrl+shift+s"
+            hotkey_str: "Ctrl + Shift + S" или "ctrl+shift+s" или "A+B"
 
         Returns:
-            Нормализованная строка "ctrl+shift+s"
+            Нормализованная строка "ctrl+shift+s" или "a+b"
         """
-        modifiers, key = HotkeyManager.parse_hotkey(hotkey_str)
+        modifiers, regular_keys = HotkeyManager.parse_hotkey(hotkey_str)
 
         # Сортируем модификаторы для консистентности
         mod_order = ["ctrl", "alt", "shift", "cmd"]
         sorted_mods = sorted(modifiers, key=lambda x: mod_order.index(x) if x in mod_order else 99)
 
-        return "+".join(sorted_mods + [key])
+        # Сортируем обычные клавиши алфавитно
+        sorted_keys = sorted(regular_keys)
+
+        # Объединяем: сначала модификаторы, потом обычные клавиши
+        return "+".join(sorted_mods + sorted_keys)
 
     def register(self, hotkey: str, callback: Callable) -> bool:
         """
@@ -292,8 +309,9 @@ class HotkeyManager:
                 # Reset triggered hotkeys that used this key so they can fire again
                 hotkeys_to_reset = set()
                 for hotkey_str in self._triggered_hotkeys:
-                    modifiers, hotkey_key = self.parse_hotkey(hotkey_str)
-                    all_keys = modifiers | {hotkey_key}
+                    modifiers, regular_keys = self.parse_hotkey(hotkey_str)
+                    # Объединяем модификаторы и обычные клавиши
+                    all_keys = modifiers | regular_keys
                     if key_str in all_keys:
                         hotkeys_to_reset.add(hotkey_str)
                 self._triggered_hotkeys -= hotkeys_to_reset
@@ -311,10 +329,10 @@ class HotkeyManager:
                 if hotkey_str in self._triggered_hotkeys:
                     continue
 
-                modifiers, key = self.parse_hotkey(hotkey_str)
+                modifiers, regular_keys = self.parse_hotkey(hotkey_str)
 
-                # Проверяем, что все клавиши хоткея нажаты
-                all_keys = modifiers | {key}
+                # Объединяем модификаторы и обычные клавиши для проверки
+                all_keys = modifiers | regular_keys
 
                 if all_keys <= self._pressed_keys:
                     # Check debounce - ensure 300ms passed since last trigger

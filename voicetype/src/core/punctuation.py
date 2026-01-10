@@ -851,6 +851,665 @@ class Punctuation:
         self.unload()
 
 
+class RUPunctONNX:
+    """
+    ONNX версия RUPunct - полностью освобождает RAM при выгрузке!
+
+    Использует ONNX Runtime + tokenizers (без transformers/PyTorch для inference).
+    Это позволяет:
+    - Быстрая загрузка/выгрузка
+    - Экономия ~400 MB RAM когда модель не нужна
+    - Работа без PyTorch в production (только ONNX Runtime)
+
+    Модель: models/rupunct-onnx/model.onnx
+    Токенизатор: models/rupunct-onnx/tokenizer.json
+    """
+
+    # Default model path relative to models/
+    MODEL_DIR = "rupunct-onnx"
+
+    # Маппинг меток на знаки препинания (из config.json id2label)
+    # Русские названия: PERIOD=точка, COMMA=запятая, QUESTION=вопрос,
+    # TIRE=тире, VOSKL=восклицательный, DVOETOCHIE=двоеточие,
+    # PERIODCOMMA=точка с запятой, DEFIS=дефис, MNOGOTOCHIE=многоточие
+    PUNCT_MAP = {
+        'PERIOD': '.',
+        'COMMA': ',',
+        'QUESTION': '?',
+        'TIRE': '—',  # тире (длинное)
+        'VOSKL': '!',  # восклицательный знак
+        'DVOETOCHIE': ':',  # двоеточие
+        'PERIODCOMMA': ';',  # точка с запятой
+        'DEFIS': '-',  # дефис (короткий)
+        'QUESTIONVOSKL': '?!',  # вопросительно-восклицательный
+        'MNOGOTOCHIE': '...',  # многоточие
+        'O': '',  # без знака
+    }
+
+    def __init__(self, model_path: str = None, language: str = "ru"):
+        """
+        Args:
+            model_path: Путь к папке с ONNX моделью (опционально)
+            language: Язык (для совместимости, RUPunct только для русского)
+        """
+        self.language = language
+        self._model_dir = Path(model_path) if model_path else None
+        self._session = None
+        self._tokenizer = None
+        self._id2label = None
+        self._is_loaded = False
+        self._lock = threading.Lock()
+
+        # Callbacks (для совместимости с Punctuation API)
+        self.on_loading_progress: Optional[Callable[[int], None]] = None
+        self.on_error: Optional[Callable[[Exception], None]] = None
+
+    def _get_model_dir(self) -> Path:
+        """Получить путь к директории с моделью."""
+        if self._model_dir:
+            return self._model_dir
+
+        # Default path
+        return get_models_base_dir() / self.MODEL_DIR
+
+    def load_model(self) -> bool:
+        """
+        Загрузить ONNX модель и токенизатор.
+
+        Returns:
+            True если успешно загружена
+        """
+        if self._is_loaded:
+            logger.warning("RUPunct ONNX model already loaded")
+            return True
+
+        try:
+            import onnxruntime as ort
+            from tokenizers import Tokenizer
+            import json as json_module
+
+            if self.on_loading_progress:
+                self.on_loading_progress(10)
+
+            model_dir = self._get_model_dir()
+
+            if not model_dir.exists():
+                raise FileNotFoundError(f"Model directory not found: {model_dir}")
+
+            model_path = model_dir / "model.onnx"
+            tokenizer_path = model_dir / "tokenizer.json"
+            config_path = model_dir / "config.json"
+
+            if not model_path.exists():
+                raise FileNotFoundError(f"ONNX model not found: {model_path}")
+
+            if not tokenizer_path.exists():
+                raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
+
+            logger.info(f"Loading RUPunct ONNX model from {model_dir}...")
+
+            if self.on_loading_progress:
+                self.on_loading_progress(30)
+
+            # Load tokenizer using tokenizers library (fast, no transformers needed)
+            self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+
+            if self.on_loading_progress:
+                self.on_loading_progress(50)
+
+            # Load id2label mapping from config.json
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json_module.load(f)
+                    self._id2label = {int(k): v for k, v in config.get('id2label', {}).items()}
+                logger.debug(f"Loaded {len(self._id2label)} labels from config")
+            else:
+                logger.warning("config.json not found, using default labels")
+                self._id2label = {}
+
+            if self.on_loading_progress:
+                self.on_loading_progress(70)
+
+            # Create ONNX Runtime session
+            # Use CPU provider for compatibility
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            # Limit threads for better memory usage
+            sess_options.intra_op_num_threads = 2
+            sess_options.inter_op_num_threads = 2
+
+            self._session = ort.InferenceSession(
+                str(model_path),
+                sess_options,
+                providers=['CPUExecutionProvider']
+            )
+
+            if self.on_loading_progress:
+                self.on_loading_progress(100)
+
+            self._is_loaded = True
+            logger.info("RUPunct ONNX model loaded successfully!")
+            return True
+
+        except ImportError as e:
+            logger.error(f"Required library not installed: {e}")
+            logger.error("Install with: pip install onnxruntime tokenizers")
+            if self.on_error:
+                self.on_error(ImportError(f"Missing library: {e}"))
+            return False
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to load RUPunct ONNX model: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            if self.on_error:
+                self.on_error(e)
+            return False
+
+    def unload(self) -> None:
+        """Выгрузить модель для освобождения памяти."""
+        with self._lock:
+            if self._session:
+                # ONNX Runtime session cleanup
+                del self._session
+                self._session = None
+
+            if self._tokenizer:
+                del self._tokenizer
+                self._tokenizer = None
+
+            self._id2label = None
+            self._is_loaded = False
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+        logger.info("RUPunct ONNX model unloaded")
+
+    def _parse_label(self, label: str) -> tuple:
+        """
+        Парсит метку RUPunct.
+
+        Метки имеют формат: CASE_PUNCT или CASE_TOTAL_PUNCT
+        Например: LOWER_PERIOD, UPPER_COMMA, UPPER_TOTAL_QUESTION
+
+        Returns:
+            (case, punct) где case: 'lower'/'upper'/'upper_total', punct: символ или None
+        """
+        parts = label.split('_')
+
+        # Определяем регистр
+        if parts[0] == 'UPPER':
+            if len(parts) > 1 and parts[1] == 'TOTAL':
+                case = 'upper_total'
+                punct_parts = parts[2:]
+            else:
+                case = 'upper'
+                punct_parts = parts[1:]
+        else:
+            case = 'lower'
+            punct_parts = parts[1:] if len(parts) > 1 else []
+
+        # Определяем пунктуацию
+        punct = None
+        if punct_parts:
+            punct_key = '_'.join(punct_parts)
+            punct = self.PUNCT_MAP.get(punct_key)
+
+        return case, punct
+
+    def enhance(self, text: str) -> str:
+        """
+        Добавить пунктуацию к тексту.
+
+        Args:
+            text: Текст без пунктуации
+
+        Returns:
+            Текст с пунктуацией и заглавными буквами
+        """
+        if not text or not text.strip():
+            return text
+
+        if not self._is_loaded:
+            logger.warning("RUPunct ONNX model not loaded, returning original text")
+            return text
+
+        with self._lock:
+            try:
+                import numpy as np
+
+                input_text = text.strip().lower()  # RUPunct expects lowercase
+
+                # Tokenize
+                encoding = self._tokenizer.encode(input_text)
+                input_ids = encoding.ids
+                attention_mask = [1] * len(input_ids)
+                token_type_ids = [0] * len(input_ids)  # All zeros for single sentence
+
+                # Prepare inputs for ONNX
+                input_ids_np = np.array([input_ids], dtype=np.int64)
+                attention_mask_np = np.array([attention_mask], dtype=np.int64)
+                token_type_ids_np = np.array([token_type_ids], dtype=np.int64)
+
+                # Run inference
+                outputs = self._session.run(
+                    None,
+                    {
+                        'input_ids': input_ids_np,
+                        'attention_mask': attention_mask_np,
+                        'token_type_ids': token_type_ids_np,
+                    }
+                )
+
+                # Get logits and predictions
+                logits = outputs[0]  # Shape: [batch, seq_len, num_labels]
+                predictions = np.argmax(logits, axis=-1)[0]  # [seq_len]
+
+                # Get tokens
+                tokens = encoding.tokens
+
+                if not tokens or not predictions.any():
+                    # Fallback: basic processing
+                    result = input_text[0].upper() + input_text[1:] if input_text else input_text
+                    if result and result[-1] not in '.!?':
+                        result += '.'
+                    return result
+
+                # Build result
+                result = []
+                sentence_start = True
+
+                for i, (token, pred_id) in enumerate(zip(tokens, predictions)):
+                    # Skip special tokens
+                    if token in ['[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]']:
+                        continue
+
+                    # Handle subword tokens (##prefix)
+                    if token.startswith('##'):
+                        token = token[2:]
+                        # Append to previous token without space
+                        if result:
+                            result[-1] = result[-1].rstrip() + token
+                            continue
+
+                    # Get label for this token
+                    label = self._id2label.get(int(pred_id), 'LOWER_O')
+
+                    # Parse label
+                    case, punct = self._parse_label(label)
+
+                    # Apply case
+                    if case == 'upper_total':
+                        token = token.upper()
+                    elif case == 'upper' or sentence_start:
+                        if token:
+                            token = token[0].upper() + token[1:]
+
+                    result.append(token)
+
+                    # Add punctuation
+                    if punct:
+                        result.append(punct)
+                        sentence_start = punct in '.!?'
+                    else:
+                        sentence_start = False
+
+                # Join tokens
+                enhanced = ' '.join(result)
+
+                # Clean up spacing around punctuation
+                for p in '.,!?:;—-':
+                    enhanced = enhanced.replace(f' {p}', p)
+
+                # Handle ellipsis
+                enhanced = enhanced.replace(' ...', '...')
+
+                # Remove double spaces
+                while '  ' in enhanced:
+                    enhanced = enhanced.replace('  ', ' ')
+
+                # Ensure first letter is capitalized
+                if enhanced and enhanced[0].islower():
+                    enhanced = enhanced[0].upper() + enhanced[1:]
+
+                # Add period at end if missing
+                if enhanced and enhanced[-1] not in '.!?':
+                    enhanced += '.'
+
+                logger.debug(f"RUPunct ONNX enhanced: '{text}' -> '{enhanced}'")
+                return enhanced.strip()
+
+            except Exception as e:
+                logger.error(f"Error enhancing text with RUPunct ONNX: {e}", exc_info=True)
+                return text
+
+    def enhance_batch(self, texts: list) -> list:
+        """Добавить пунктуацию к списку текстов."""
+        if not self._is_loaded:
+            return texts
+        return [self.enhance(t) for t in texts]
+
+    def is_loaded(self) -> bool:
+        """Проверить, загружена ли модель."""
+        return self._is_loaded
+
+    def is_using_local_model(self) -> bool:
+        """Проверить, используется ли локальная модель."""
+        return True  # ONNX is always local
+
+    def set_language(self, language: str) -> bool:
+        """
+        Изменить язык (для совместимости).
+        RUPunct поддерживает только русский.
+        """
+        self.language = language
+        return True
+
+    def is_using_jit_model(self) -> bool:
+        """Для совместимости с Silero API."""
+        return False
+
+    def get_model_info(self) -> dict:
+        """Получить информацию о модели."""
+        return {
+            "loaded": self._is_loaded,
+            "local": True,
+            "jit": False,
+            "has_apply_te": False,
+            "language": self.language,
+            "model_name": "RUPunct ONNX",
+            "type": "RUPunct_medium (ONNX Runtime)",
+            "model_dir": str(self._get_model_dir()),
+        }
+
+    def __del__(self):
+        """Деструктор."""
+        self.unload()
+
+
+class RUPunctMedium:
+    """
+    Пунктуация на базе RUPunct/RUPunct_medium (ELECTRA-based).
+    Легче чем Silero TE, использует transformers pipeline.
+
+    Поддерживаемые знаки: . , ? ! : ; — - ...
+    Также восстанавливает регистр (LOWER/UPPER/UPPER_TOTAL).
+
+    Hugging Face: https://huggingface.co/RUPunct/RUPunct_medium
+    """
+
+    MODEL_NAME = "RUPunct/RUPunct_medium"
+
+    # Маппинг меток на знаки препинания
+    PUNCT_MAP = {
+        'PERIOD': '.',
+        'COMMA': ',',
+        'QUESTION': '?',
+        'EXCLAMATION': '!',
+        'COLON': ':',
+        'SEMICOLON': ';',
+        'DASH': '—',
+        'HYPHEN': '-',
+        'ELLIPSIS': '...',
+        'QUESTIONEXCLAMATION': '?!',
+    }
+
+    def __init__(self, model_path: str = None, language: str = "ru"):
+        """
+        Args:
+            model_path: Путь к локальной модели (опционально)
+            language: Язык (для совместимости, RUPunct только для русского)
+        """
+        self.language = language
+        self.model_path = model_path
+        self._classifier = None
+        self._tokenizer = None
+        self._is_loaded = False
+        self._lock = threading.Lock()
+
+        # Callbacks
+        self.on_loading_progress: Optional[Callable[[int], None]] = None
+        self.on_error: Optional[Callable[[Exception], None]] = None
+
+    def load_model(self) -> bool:
+        """
+        Загрузить модель RUPunct_medium.
+
+        Returns:
+            True если успешно загружена
+        """
+        if self._is_loaded:
+            logger.warning("RUPunct model already loaded")
+            return True
+
+        try:
+            if self.on_loading_progress:
+                self.on_loading_progress(10)
+
+            logger.info(f"Loading RUPunct_medium model...")
+
+            # Импортируем transformers
+            from transformers import pipeline, AutoTokenizer
+
+            if self.on_loading_progress:
+                self.on_loading_progress(30)
+
+            # Определяем путь к модели
+            model_name = self.model_path if self.model_path else self.MODEL_NAME
+
+            # Загружаем токенизатор с нужными параметрами
+            logger.info(f"Loading tokenizer from {model_name}...")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                strip_accents=False,
+                add_prefix_space=True
+            )
+
+            if self.on_loading_progress:
+                self.on_loading_progress(60)
+
+            # Создаём pipeline для NER
+            logger.info(f"Creating NER pipeline...")
+            self._classifier = pipeline(
+                "ner",
+                model=model_name,
+                tokenizer=self._tokenizer,
+                aggregation_strategy="first"
+            )
+
+            if self.on_loading_progress:
+                self.on_loading_progress(100)
+
+            self._is_loaded = True
+            logger.info("RUPunct_medium model loaded successfully!")
+            return True
+
+        except ImportError as e:
+            logger.error(f"transformers not installed: {e}")
+            if self.on_error:
+                self.on_error(ImportError("transformers library required for RUPunct"))
+            return False
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to load RUPunct model: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            if self.on_error:
+                self.on_error(e)
+            return False
+
+    def _parse_label(self, label: str) -> tuple:
+        """
+        Парсит метку RUPunct.
+
+        Метки имеют формат: CASE_PUNCT
+        Например: LOWER_PERIOD, UPPER_COMMA, UPPER_TOTAL_QUESTION
+
+        Returns:
+            (case, punct) где case: 'lower'/'upper'/'upper_total', punct: символ или None
+        """
+        parts = label.split('_')
+
+        # Определяем регистр
+        if parts[0] == 'UPPER':
+            if len(parts) > 1 and parts[1] == 'TOTAL':
+                case = 'upper_total'
+                punct_parts = parts[2:]
+            else:
+                case = 'upper'
+                punct_parts = parts[1:]
+        else:
+            case = 'lower'
+            punct_parts = parts[1:] if len(parts) > 1 else []
+
+        # Определяем пунктуацию
+        punct = None
+        if punct_parts:
+            punct_key = '_'.join(punct_parts)
+            punct = self.PUNCT_MAP.get(punct_key)
+
+        return case, punct
+
+    def enhance(self, text: str) -> str:
+        """
+        Добавить пунктуацию к тексту.
+
+        Args:
+            text: Текст без пунктуации
+
+        Returns:
+            Текст с пунктуацией и заглавными буквами
+        """
+        if not text or not text.strip():
+            return text
+
+        if not self._is_loaded:
+            logger.warning("RUPunct model not loaded, returning original text")
+            return text
+
+        with self._lock:
+            try:
+                input_text = text.strip().lower()  # RUPunct ожидает lowercase
+
+                # Получаем предсказания
+                predictions = self._classifier(input_text)
+
+                if not predictions:
+                    # Если нет предсказаний, возвращаем базовую обработку
+                    result = input_text[0].upper() + input_text[1:] if input_text else input_text
+                    if result and result[-1] not in '.!?':
+                        result += '.'
+                    return result
+
+                # Собираем результат
+                result = []
+                prev_end = 0
+                sentence_start = True
+
+                for pred in predictions:
+                    word = pred['word']
+                    label = pred['entity_group']
+                    start = pred.get('start', 0)
+                    end = pred.get('end', len(word))
+
+                    # Парсим метку
+                    case, punct = self._parse_label(label)
+
+                    # Применяем регистр
+                    if case == 'upper_total':
+                        word = word.upper()
+                    elif case == 'upper' or sentence_start:
+                        if word:
+                            word = word[0].upper() + word[1:]
+
+                    result.append(word)
+
+                    # Добавляем пунктуацию
+                    if punct:
+                        result.append(punct)
+                        sentence_start = punct in '.!?'
+                    else:
+                        sentence_start = False
+
+                # Собираем строку
+                enhanced = ' '.join(result)
+
+                # Убираем пробелы перед знаками препинания
+                for p in '.,!?:;—':
+                    enhanced = enhanced.replace(f' {p}', p)
+
+                # Убираем двойные пробелы
+                while '  ' in enhanced:
+                    enhanced = enhanced.replace('  ', ' ')
+
+                # Убеждаемся, что первая буква заглавная
+                if enhanced and enhanced[0].islower():
+                    enhanced = enhanced[0].upper() + enhanced[1:]
+
+                # Добавляем точку в конце если нет
+                if enhanced and enhanced[-1] not in '.!?':
+                    enhanced += '.'
+
+                logger.debug(f"RUPunct enhanced: '{text}' -> '{enhanced}'")
+                return enhanced.strip()
+
+            except Exception as e:
+                logger.error(f"Error enhancing text with RUPunct: {e}", exc_info=True)
+                return text
+
+    def enhance_batch(self, texts: list) -> list:
+        """Добавить пунктуацию к списку текстов."""
+        if not self._is_loaded:
+            return texts
+        return [self.enhance(t) for t in texts]
+
+    def is_loaded(self) -> bool:
+        """Проверить, загружена ли модель."""
+        return self._is_loaded
+
+    def is_using_local_model(self) -> bool:
+        """Проверить, используется ли локальная модель."""
+        return self.model_path is not None
+
+    def set_language(self, language: str) -> bool:
+        """
+        Изменить язык (для совместимости).
+        RUPunct поддерживает только русский.
+        """
+        self.language = language
+        return True
+
+    def unload(self) -> None:
+        """Выгрузить модель для освобождения памяти."""
+        with self._lock:
+            self._classifier = None
+            self._tokenizer = None
+            self._is_loaded = False
+            logger.info("RUPunct model unloaded")
+
+    def is_using_jit_model(self) -> bool:
+        """Для совместимости с Silero API."""
+        return False
+
+    def get_model_info(self) -> dict:
+        """Получить информацию о модели."""
+        return {
+            "loaded": self._is_loaded,
+            "local": self.model_path is not None,
+            "jit": False,
+            "has_apply_te": False,
+            "language": self.language,
+            "model_name": self.MODEL_NAME,
+            "type": "RUPunct_medium (ELECTRA-based)",
+        }
+
+    def __del__(self):
+        """Деструктор."""
+        self.unload()
+
+
 class PunctuationDisabled:
     """
     Базовая пунктуация без ML.
