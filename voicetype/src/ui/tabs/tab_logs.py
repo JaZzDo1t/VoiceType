@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QComboBox, QPlainTextEdit
@@ -76,10 +75,10 @@ class TabLogs(QWidget):
         open_folder_btn.clicked.connect(self._open_logs_folder)
         top_layout.addWidget(open_folder_btn)
 
-        # Кнопка очистки отображения
+        # Кнопка очистки файла
         clear_btn = QPushButton("Очистить")
         clear_btn.setObjectName("dangerButton")
-        clear_btn.clicked.connect(self._clear_display)
+        clear_btn.clicked.connect(self._clear_log_file)
         top_layout.addWidget(clear_btn)
 
         layout.addLayout(top_layout)
@@ -107,112 +106,25 @@ class TabLogs(QWidget):
         self._status_label.setObjectName("secondaryLabel")
         layout.addWidget(self._status_label)
 
-    def _get_current_log_file(self) -> Path:
-        """Получить путь к текущему файлу логов."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        return LOGS_DIR / f"voicetype_{today}.log"
-
-    def _get_log_files_for_24h(self) -> list:
-        """Получить список файлов логов за последние 24 часа."""
-        files = []
-        today = datetime.now()
-        yesterday = today - timedelta(days=1)
-
-        # Проверяем сегодняшний файл
-        today_file = LOGS_DIR / f"voicetype_{today.strftime('%Y-%m-%d')}.log"
-        if today_file.exists():
-            files.append(today_file)
-
-        # Проверяем вчерашний файл (для записей менее 24 часов назад)
-        yesterday_file = LOGS_DIR / f"voicetype_{yesterday.strftime('%Y-%m-%d')}.log"
-        if yesterday_file.exists():
-            files.append(yesterday_file)
-
-        return files
-
-    def _filter_lines_by_time(self, lines: list, cutoff_time: datetime) -> list:
-        """Отфильтровать строки логов, оставив только записи за последние 24 часа."""
-        filtered = []
-        current_entry_valid = False
-
-        for line in lines:
-            # Формат: HH:mm:ss [LEVEL] message
-            # Пробуем извлечь время из начала строки
-            if len(line) >= 8 and line[2] == ':' and line[5] == ':':
-                try:
-                    time_str = line[:8]
-                    log_time = datetime.strptime(time_str, "%H:%M:%S")
-                    # Устанавливаем дату для сравнения
-                    log_datetime = datetime.now().replace(
-                        hour=log_time.hour,
-                        minute=log_time.minute,
-                        second=log_time.second,
-                        microsecond=0
-                    )
-                    # Если время больше текущего, значит это вчерашняя запись
-                    if log_datetime > datetime.now():
-                        log_datetime -= timedelta(days=1)
-
-                    current_entry_valid = log_datetime >= cutoff_time
-                except ValueError:
-                    pass
-
-            # Добавляем строку если текущая запись валидна
-            if current_entry_valid:
-                filtered.append(line)
-
-        return filtered
+    def _get_log_file(self) -> Path:
+        """Получить путь к файлу логов."""
+        return LOGS_DIR / "voicetype.log"
 
     def _load_logs(self):
-        """Загрузить логи из файлов за последние 24 часа."""
-        log_files = self._get_log_files_for_24h()
-        cutoff_time = datetime.now() - timedelta(hours=24)
+        """Загрузить логи из файла."""
+        log_file = self._get_log_file()
 
-        if not log_files:
+        if not log_file.exists():
             self._file_label.setText("Файл: -")
             self._log_view.setPlainText("Файл логов не найден.\nЛоги появятся после запуска приложения.")
             self._status_label.setText("Строк: 0")
             return
 
-        # Показываем имена файлов
-        file_names = ", ".join(f.name for f in log_files)
-        self._file_label.setText(f"Файлы: {file_names}")
+        self._file_label.setText(f"Файл: {log_file.name}")
 
         try:
-            all_lines = []
-
-            # Читаем все файлы (вчерашний сначала, потом сегодняшний)
-            for log_file in reversed(log_files):
-                file_date = log_file.stem.split("_")[-1]  # voicetype_YYYY-MM-DD -> YYYY-MM-DD
-                with open(log_file, "r", encoding="utf-8") as f:
-                    file_lines = f.readlines()
-                    # Добавляем дату к строкам для правильной фильтрации
-                    for line in file_lines:
-                        all_lines.append((file_date, line))
-
-            # Фильтруем по времени (последние 24 часа)
-            filtered_by_time = []
-            current_entry_valid = False
-
-            for file_date, line in all_lines:
-                # Формат: HH:mm:ss [LEVEL] message
-                if len(line) >= 8 and line[2] == ':' and line[5] == ':':
-                    try:
-                        time_str = line[:8]
-                        log_time = datetime.strptime(time_str, "%H:%M:%S")
-                        log_datetime = datetime.strptime(file_date, "%Y-%m-%d").replace(
-                            hour=log_time.hour,
-                            minute=log_time.minute,
-                            second=log_time.second
-                        )
-                        current_entry_valid = log_datetime >= cutoff_time
-                    except ValueError:
-                        pass
-
-                if current_entry_valid:
-                    filtered_by_time.append(line)
-
-            lines = filtered_by_time
+            with open(log_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
 
             # Фильтруем по уровню если нужно
             if self._current_filter:
@@ -227,9 +139,8 @@ class TabLogs(QWidget):
                             filtered_lines.append(line)
                 lines = filtered_lines
 
-            # Показываем последние 1000 строк (новые сверху)
-            display_lines = lines[-1000:]
-            display_lines.reverse()  # Новые записи сверху
+            # Показываем все строки (новые сверху)
+            display_lines = list(reversed(lines))
 
             text = "".join(display_lines)
             self._log_view.setPlainText(text)
@@ -238,7 +149,7 @@ class TabLogs(QWidget):
             scrollbar = self._log_view.verticalScrollBar()
             scrollbar.setValue(0)
 
-            self._status_label.setText(f"Строк: {len(display_lines)} (за 24ч: {len(filtered_by_time)})")
+            self._status_label.setText(f"Строк: {len(display_lines)}")
 
         except Exception as e:
             self._log_view.setPlainText(f"Ошибка чтения логов: {e}")
@@ -265,10 +176,17 @@ class TabLogs(QWidget):
         except Exception as e:
             logger.error(f"Failed to open logs folder: {e}")
 
-    def _clear_display(self):
-        """Очистить отображение (не удаляет файлы)."""
-        self._log_view.clear()
-        self._status_label.setText("Строк: 0")
+    def _clear_log_file(self):
+        """Очистить файл логов."""
+        log_file = self._get_log_file()
+        try:
+            if log_file.exists():
+                with open(log_file, "w", encoding="utf-8") as f:
+                    f.write("")
+            self._load_logs()
+            logger.info("Log file cleared by user")
+        except Exception as e:
+            logger.error(f"Failed to clear log file: {e}")
 
     def refresh(self):
         """Обновить вкладку."""

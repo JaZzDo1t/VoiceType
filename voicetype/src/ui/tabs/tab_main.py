@@ -91,14 +91,29 @@ class TabMain(QWidget):
         self._punctuation_check = QCheckBox("Автоматическая пунктуация")
         recog_layout.addWidget(self._punctuation_check)
 
-        # Статус Silero TE
-        silero_layout = QHBoxLayout()
-        silero_layout.addWidget(QLabel("Silero TE:"))
-        self._silero_status = QLabel("не загружена")
-        self._silero_status.setStyleSheet("color: #9CA3AF;")  # серый
-        silero_layout.addWidget(self._silero_status)
-        silero_layout.addStretch()
-        recog_layout.addLayout(silero_layout)
+        # Секция МОДЕЛИ (статус загрузки)
+        models_group = QGroupBox("МОДЕЛИ")
+        models_layout = QVBoxLayout(models_group)
+
+        # Статус Vosk
+        vosk_layout = QHBoxLayout()
+        vosk_layout.addWidget(QLabel("Vosk:"))
+        self._vosk_status = QLabel("выгружена")
+        self._vosk_status.setStyleSheet("color: #9CA3AF;")  # серый
+        vosk_layout.addWidget(self._vosk_status)
+        vosk_layout.addStretch()
+        models_layout.addLayout(vosk_layout)
+
+        # Статус пунктуации (RUPunct ONNX)
+        punct_layout = QHBoxLayout()
+        punct_layout.addWidget(QLabel("Пунктуация:"))
+        self._punct_status = QLabel("выгружена")
+        self._punct_status.setStyleSheet("color: #9CA3AF;")  # серый
+        punct_layout.addWidget(self._punct_status)
+        punct_layout.addStretch()
+        models_layout.addLayout(punct_layout)
+
+        recog_layout.addWidget(models_group)
 
         layout.addWidget(recog_group)
 
@@ -268,16 +283,44 @@ class TabMain(QWidget):
         """Обновить все данные вкладки."""
         self._refresh_microphones()
 
+    def set_vosk_status(self, loaded: bool, model_name: str = ""):
+        """
+        Установить статус загрузки Vosk модели.
+
+        Args:
+            loaded: True если модель загружена
+            model_name: Название модели (опционально)
+        """
+        if loaded:
+            text = f"загружена ({model_name})" if model_name else "загружена"
+            self._vosk_status.setText(text)
+            self._vosk_status.setStyleSheet("color: #10B981;")  # зелёный
+        else:
+            self._vosk_status.setText("выгружена")
+            self._vosk_status.setStyleSheet("color: #9CA3AF;")  # серый
+
+    def set_punctuation_status(self, loaded: bool, model_name: str = ""):
+        """
+        Установить статус загрузки модели пунктуации.
+
+        Args:
+            loaded: True если модель загружена
+            model_name: Название модели (опционально)
+        """
+        if loaded:
+            text = f"загружена ({model_name})" if model_name else "загружена"
+            self._punct_status.setText(text)
+            self._punct_status.setStyleSheet("color: #10B981;")  # зелёный
+        else:
+            self._punct_status.setText("выгружена")
+            self._punct_status.setStyleSheet("color: #9CA3AF;")  # серый
+
     def set_silero_status(self, loaded: bool):
         """
-        Установить статус загрузки Silero TE.
+        Установить статус загрузки Silero TE (для обратной совместимости).
+        Теперь просто вызывает set_punctuation_status.
 
         Args:
             loaded: True если модель загружена
         """
-        if loaded:
-            self._silero_status.setText("загружена ✓")
-            self._silero_status.setStyleSheet("color: #10B981;")  # зелёный
-        else:
-            self._silero_status.setText("не загружена")
-            self._silero_status.setStyleSheet("color: #9CA3AF;")  # серый
+        self.set_punctuation_status(loaded, "Silero TE" if loaded else "")

@@ -36,8 +36,8 @@ STATS_INTERVAL_SECONDS = 600  # 10 минут
 LOG_RETENTION_DAYS = 1  # Keep logs for 24 hours only
 
 # Default hotkeys
-DEFAULT_HOTKEY_START = "ctrl+shift+s"
-DEFAULT_HOTKEY_STOP = "ctrl+shift+x"
+# Toggle hotkey - одна кнопка для старт/стоп записи
+DEFAULT_HOTKEY_TOGGLE = "ctrl+shift+s"
 
 # UI
 WINDOW_MIN_WIDTH = 700

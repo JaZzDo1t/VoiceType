@@ -28,7 +28,7 @@ from src.utils.constants import (
     TRAY_STATE_READY, TRAY_STATE_RECORDING,
     TRAY_STATE_LOADING, TRAY_STATE_ERROR,
     OUTPUT_MODE_KEYBOARD, OUTPUT_MODE_CLIPBOARD,
-    DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP
+    DEFAULT_HOTKEY_TOGGLE
 )
 
 
@@ -56,8 +56,7 @@ def mock_config():
         "output.mode": OUTPUT_MODE_KEYBOARD,
         "system.autostart": False,
         "system.theme": "dark",
-        "hotkeys.start_recording": DEFAULT_HOTKEY_START,
-        "hotkeys.stop_recording": DEFAULT_HOTKEY_STOP,
+        "hotkeys.toggle_recording": DEFAULT_HOTKEY_TOGGLE,
         "internal.window_geometry": None,
     }
 
@@ -194,12 +193,10 @@ def mock_main_window(qapp):
     mock.tab_main.autostart_changed = Mock()
     mock.tab_main.autostart_changed.connect = Mock()
 
-    # Tab Hotkeys
+    # Tab Hotkeys - single toggle hotkey
     mock.tab_hotkeys = Mock()
-    mock.tab_hotkeys.start_hotkey_changed = Mock()
-    mock.tab_hotkeys.start_hotkey_changed.connect = Mock()
-    mock.tab_hotkeys.stop_hotkey_changed = Mock()
-    mock.tab_hotkeys.stop_hotkey_changed.connect = Mock()
+    mock.tab_hotkeys.toggle_hotkey_changed = Mock()
+    mock.tab_hotkeys.toggle_hotkey_changed.connect = Mock()
 
     # Tab Test
     mock.tab_test = Mock()
@@ -985,9 +982,9 @@ class TestQuitBehavior:
 class TestSignalConnections:
     """Tests for signal connections."""
 
-    def test_hotkey_triggered_signal_start(self, qapp, mock_config, mock_database,
-                                           mock_models_manager, mock_tray_icon, mock_main_window):
-        """Test _hotkey_triggered_signal with 'start' action."""
+    def test_hotkey_triggered_signal_toggle(self, qapp, mock_config, mock_database,
+                                            mock_models_manager, mock_tray_icon, mock_main_window):
+        """Test _hotkey_triggered_signal with 'toggle' action."""
         with patch('src.app.get_config', return_value=mock_config), \
              patch('src.app.get_database', return_value=mock_database), \
              patch('src.app.get_models_manager', return_value=mock_models_manager), \
@@ -1007,48 +1004,14 @@ class TestSignalConnections:
             app = VoiceTypeApp()
             app.initialize()
 
-            # Patch start_recording to verify it's called
-            app.start_recording = Mock()
+            # Patch toggle_recording to verify it's called
+            app.toggle_recording = Mock()
 
             # Emit signal
-            app._on_hotkey_triggered("start")
+            app._on_hotkey_triggered("toggle")
 
-            # Should call start_recording
-            app.start_recording.assert_called_once()
-
-            # Cleanup
-            app._stats_timer.stop()
-
-    def test_hotkey_triggered_signal_stop(self, qapp, mock_config, mock_database,
-                                          mock_models_manager, mock_tray_icon, mock_main_window):
-        """Test _hotkey_triggered_signal with 'stop' action."""
-        with patch('src.app.get_config', return_value=mock_config), \
-             patch('src.app.get_database', return_value=mock_database), \
-             patch('src.app.get_models_manager', return_value=mock_models_manager), \
-             patch('src.app.TrayIcon', return_value=mock_tray_icon), \
-             patch('src.app.MainWindow', return_value=mock_main_window), \
-             patch('src.app.OutputManager'), \
-             patch('src.app.HotkeyManager') as mock_hotkey_cls, \
-             patch('src.app.Autostart'):
-
-            mock_hotkey_cls.return_value = Mock(
-                register=Mock(),
-                start_listening=Mock()
-            )
-
-            from src.app import VoiceTypeApp
-
-            app = VoiceTypeApp()
-            app.initialize()
-
-            # Patch stop_recording to verify it's called
-            app.stop_recording = Mock()
-
-            # Emit signal
-            app._on_hotkey_triggered("stop")
-
-            # Should call stop_recording
-            app.stop_recording.assert_called_once()
+            # Should call toggle_recording
+            app.toggle_recording.assert_called_once()
 
             # Cleanup
             app._stats_timer.stop()

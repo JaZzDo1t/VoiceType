@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.constants import (
     SAMPLE_RATE, CHANNELS, CHUNK_SIZE,
     OUTPUT_MODE_KEYBOARD, OUTPUT_MODE_CLIPBOARD,
-    DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP
+    DEFAULT_HOTKEY_TOGGLE
 )
 
 
@@ -648,19 +648,19 @@ class TestHotkeyManager:
         """parse_hotkey parses simple hotkey correctly."""
         from src.core.hotkey_manager import HotkeyManager
 
-        modifiers, key = HotkeyManager.parse_hotkey("ctrl+s")
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("ctrl+s")
 
         assert modifiers == {"ctrl"}
-        assert key == "s"
+        assert regular_keys == {"s"}
 
     def test_parse_hotkey_multiple_modifiers(self):
         """parse_hotkey parses multiple modifiers."""
         from src.core.hotkey_manager import HotkeyManager
 
-        modifiers, key = HotkeyManager.parse_hotkey("ctrl+shift+alt+s")
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("ctrl+shift+alt+s")
 
         assert modifiers == {"ctrl", "shift", "alt"}
-        assert key == "s"
+        assert regular_keys == {"s"}
 
     def test_parse_hotkey_normalizes_ctrl(self):
         """parse_hotkey normalizes 'control' to 'ctrl'."""
@@ -685,21 +685,39 @@ class TestHotkeyManager:
         """parse_hotkey is case insensitive."""
         from src.core.hotkey_manager import HotkeyManager
 
-        mod1, key1 = HotkeyManager.parse_hotkey("CTRL+SHIFT+S")
-        mod2, key2 = HotkeyManager.parse_hotkey("ctrl+shift+s")
+        mod1, keys1 = HotkeyManager.parse_hotkey("CTRL+SHIFT+S")
+        mod2, keys2 = HotkeyManager.parse_hotkey("ctrl+shift+s")
 
         assert mod1 == mod2
-        assert key1 == key2
+        assert keys1 == keys2
 
     def test_parse_hotkey_with_spaces(self):
         """parse_hotkey handles spaces in hotkey string."""
         from src.core.hotkey_manager import HotkeyManager
 
-        mod1, key1 = HotkeyManager.parse_hotkey("Ctrl + Shift + S")
-        mod2, key2 = HotkeyManager.parse_hotkey("ctrl+shift+s")
+        mod1, keys1 = HotkeyManager.parse_hotkey("Ctrl + Shift + S")
+        mod2, keys2 = HotkeyManager.parse_hotkey("ctrl+shift+s")
 
         assert mod1 == mod2
-        assert key1 == key2
+        assert keys1 == keys2
+
+    def test_parse_hotkey_multiple_regular_keys(self):
+        """parse_hotkey parses multiple regular keys (like A+B)."""
+        from src.core.hotkey_manager import HotkeyManager
+
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("a+b")
+
+        assert modifiers == set()
+        assert regular_keys == {"a", "b"}
+
+    def test_parse_hotkey_mixed_modifiers_and_keys(self):
+        """parse_hotkey handles mixed modifiers and regular keys."""
+        from src.core.hotkey_manager import HotkeyManager
+
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("ctrl+a+b")
+
+        assert modifiers == {"ctrl"}
+        assert regular_keys == {"a", "b"}
 
     def test_normalize_hotkey(self):
         """normalize_hotkey produces consistent format."""
@@ -1101,10 +1119,10 @@ class TestEdgeCases:
         """Hotkey with just one key (no modifiers)."""
         from src.core.hotkey_manager import HotkeyManager
 
-        modifiers, key = HotkeyManager.parse_hotkey("f1")
+        modifiers, regular_keys = HotkeyManager.parse_hotkey("f1")
 
         assert modifiers == set()
-        assert key == "f1"
+        assert regular_keys == {"f1"}
 
     def test_output_manager_very_long_text(self):
         """OutputManager handles very long text."""

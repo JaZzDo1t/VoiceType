@@ -11,7 +11,7 @@ from loguru import logger
 
 from src.utils.constants import (
     CONFIG_FILE, APP_DATA_DIR,
-    DEFAULT_HOTKEY_START, DEFAULT_HOTKEY_STOP,
+    DEFAULT_HOTKEY_TOGGLE,
     THEME_DARK, OUTPUT_MODE_KEYBOARD
 )
 
@@ -31,8 +31,8 @@ DEFAULT_CONFIG = {
         "mode": OUTPUT_MODE_KEYBOARD
     },
     "hotkeys": {
-        "start_recording": DEFAULT_HOTKEY_START,
-        "stop_recording": DEFAULT_HOTKEY_STOP
+        # Toggle hotkey - одна кнопка для старт/стоп записи
+        "toggle_recording": DEFAULT_HOTKEY_TOGGLE
     },
     "system": {
         "autostart": False,
