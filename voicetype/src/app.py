@@ -466,12 +466,13 @@ class VoiceTypeApp(QObject):
                     logger.error("No Vosk model path saved")
                     return
 
-            # Загружаем пунктуацию если была выгружена
-            if not self._lazy_model_manager.is_punctuation_loaded():
-                logger.info("Loading punctuation model for recording...")
-                if self._lazy_model_manager.load_punctuation():
-                    self._punctuation = self._lazy_model_manager._punctuation
-                    logger.info("Punctuation model loaded")
+            # Загружаем пунктуацию если была выгружена И если она включена в конфиге
+            if self._config.get("recognition.punctuation_enabled", True):
+                if not self._lazy_model_manager.is_punctuation_loaded():
+                    logger.info("Loading punctuation model for recording...")
+                    if self._lazy_model_manager.load_punctuation():
+                        self._punctuation = self._lazy_model_manager._punctuation
+                        logger.info("Punctuation model loaded")
 
         self._is_recording = True
         self._session_text = ""

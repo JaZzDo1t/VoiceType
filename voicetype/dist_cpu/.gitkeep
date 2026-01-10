@@ -1,2 +1,0 @@
-# This directory will contain CPU-only builds
-# Built with: pyinstaller build/voicetype.cpu.spec

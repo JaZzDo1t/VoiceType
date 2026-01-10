@@ -1,4 +1,3 @@
 @echo off
 cd /d "%~dp0"
-.\venv_cpu\Scripts\python.exe run.py
-pause
+start "" .\venv\Scripts\pythonw.exe run.py
