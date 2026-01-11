@@ -142,19 +142,6 @@ def started_audio_capture(check_microphone_available):
     capture.stop()
 
 
-@pytest.fixture
-def recognizer(vosk_model_path):
-    """
-    Создать Recognizer с загруженной моделью.
-    """
-    from src.core.recognizer import Recognizer
-    rec = Recognizer(str(vosk_model_path))
-    if not rec.load_model():
-        pytest.skip("Failed to load Vosk model")
-    yield rec
-    rec.unload()
-
-
 # =============================================================================
 # Utility Fixtures
 # =============================================================================

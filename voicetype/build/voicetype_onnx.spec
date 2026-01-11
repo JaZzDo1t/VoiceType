@@ -122,9 +122,6 @@ hiddenimports = [
     # Наши модули
     'src',
     'src.core',
-    'src.core.recognizer',
-    'src.core.punctuation',
-    'src.core.lazy_model_manager',
     'src.core.hotkey_manager',
     'src.core.output_manager',
     'src.core.audio_capture',

@@ -21,11 +21,11 @@ DEFAULT_CONFIG = {
     "audio": {
         "microphone_id": "default",
         "language": "ru",
-        "model": "small",
-        "vad_sensitivity": 0.5
-    },
-    "recognition": {
-        "punctuation_enabled": True
+        "engine": "whisper",
+        "whisper": {
+            "model": "small",
+            "vad_threshold": 0.7
+        }
     },
     "output": {
         "mode": OUTPUT_MODE_KEYBOARD

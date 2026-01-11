@@ -101,11 +101,9 @@ mypy src/         # Type check
 
 ## Architecture
 
-### Recognition Engines
+### Recognition Engine
 
-Two recognition engines available:
-1. **Vosk** ([recognizer.py](voicetype/src/core/recognizer.py)) - streaming, real-time partial results
-2. **Whisper** ([whisper_recognizer.py](voicetype/src/core/whisper_recognizer.py)) - VAD-based, higher quality
+**Whisper** ([whisper_recognizer.py](voicetype/src/core/whisper_recognizer.py)) - VAD-based, high quality recognition.
 
 Whisper uses:
 - **faster-whisper** (CTranslate2) - 4x faster than OpenAI Whisper, no PyTorch
@@ -145,10 +143,8 @@ voicetype/src/
 ├── app.py              # Main controller, connects all components
 ├── main.py             # Entry point, Qt app setup
 ├── core/
-│   ├── recognizer.py        # Vosk engine
 │   ├── whisper_recognizer.py # Whisper engine with VAD
 │   ├── audio_capture.py     # PyAudio capture
-│   ├── punctuation.py       # RUPunct ONNX
 │   └── output_manager.py    # Keyboard/clipboard output
 ├── ui/                 # PyQt6 interface (tabs, widgets, themes)
 ├── data/               # Config, database, model management
@@ -160,10 +156,9 @@ voicetype/src/
 1. User triggers hotkey → `HotkeyManager` emits signal
 2. `VoiceTypeApp.start_recording()` creates `AudioCapture`
 3. `AudioCapture` writes audio chunks to queue in separate thread
-4. Recognition thread reads queue, feeds `Recognizer` or `WhisperRecognizer`
+4. Recognition thread reads queue, feeds `WhisperRecognizer`
 5. Recognizer emits partial/final results via signals
-6. Final text processed through `Punctuation` → `OutputManager`
-7. `OutputManager` types into active window (pynput) or copies to clipboard
+6. `OutputManager` types into active window (pynput) or copies to clipboard
 
 ## Models Location
 

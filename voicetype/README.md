@@ -117,10 +117,8 @@ voicetype/
 │   ├── main.py              # Точка входа
 │   ├── app.py               # Главный контроллер
 │   ├── core/
-│   │   ├── recognizer.py        # Vosk движок
 │   │   ├── whisper_recognizer.py # Whisper движок
 │   │   ├── audio_capture.py     # Захват аудио
-│   │   ├── punctuation.py       # ONNX пунктуация
 │   │   └── output_manager.py    # Вывод текста
 │   ├── ui/                  # PyQt6 интерфейс
 │   ├── data/                # Конфиг, БД, модели
@@ -144,7 +142,7 @@ voicetype/
 
 ```bash
 pip install pyinstaller
-pyinstaller build/voicetype.spec
+pyinstaller build/voicetype_onnx.spec
 ```
 
 Результат: `dist/VoiceType/`

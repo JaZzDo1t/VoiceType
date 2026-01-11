@@ -52,6 +52,7 @@ class AudioCapture:
         self._current_level: float = 0.0
         self._actual_sample_rate: int = sample_rate  # Реальный используемый sample rate
         self._actual_device_id: Optional[int] = None  # Реальный используемый device index
+        self._noise_floor: int = 800  # Порог шума для индикатора уровня
 
         # Callbacks
         self.on_audio_data: Optional[Callable[[bytes], None]] = None
@@ -417,12 +418,24 @@ class AudioCapture:
             # Вычисляем RMS (root mean square) как меру громкости
             rms = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
 
-            # Нормализуем к диапазону 0.0 - 1.0
-            # Максимальное значение для int16 = 32767
-            self._current_level = min(1.0, rms / 32767.0 * 10)  # Усиливаем для лучшей видимости
+            # Порог шума - значения ниже этого считаются тишиной
+            if rms < self._noise_floor:
+                self._current_level = 0.0
+            else:
+                # Линейная шкала от noise_floor до ~10000 (громкая речь)
+                # Выше 10000 = 100%
+                effective_rms = rms - self._noise_floor
+                MAX_SPEECH_RMS = 10000.0 - self._noise_floor
+                level = effective_rms / MAX_SPEECH_RMS
+                self._current_level = max(0.0, min(1.0, level))
 
         except Exception as e:
             logger.debug(f"Error calculating audio level: {e}")
+
+    def set_noise_floor(self, noise_floor: int) -> None:
+        """Установить порог шума для индикатора уровня."""
+        self._noise_floor = noise_floor
+        logger.debug(f"Noise floor set to: {noise_floor}")
 
     def stop(self) -> None:
         """Остановить захват."""

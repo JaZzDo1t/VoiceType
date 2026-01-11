@@ -5,12 +5,10 @@
 audio:
   microphone_id: "default"          # Microphone ID or "default"
   language: "ru"                     # "ru" or "en"
-  model: "small"                     # "small" or "large"
-  vad_sensitivity: 0.5               # 0.0 - 1.0
-
-# Recognition settings
-recognition:
-  punctuation_enabled: true          # Auto-punctuation via Silero TE
+  engine: "whisper"                  # Recognition engine
+  whisper:
+    model: "small"                   # "tiny", "base", "small", "medium", "large-v2", "large-v3"
+    vad_threshold: 0.7               # VAD sensitivity (0.0 - 1.0)
 
 # Output settings
 output:

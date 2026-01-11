@@ -38,11 +38,11 @@ class WhisperRecognizer:
         text = recognizer.get_final_result()
     """
 
-    # Поддерживаемые размеры моделей Whisper
-    SUPPORTED_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
+    # Поддерживаемые размеры моделей Whisper (только base, small, medium)
+    SUPPORTED_MODEL_SIZES = ["base", "small", "medium"]
 
-    # Поддерживаемые устройства
-    SUPPORTED_DEVICES = ["cpu", "cuda"]
+    # Поддерживаемые устройства (только CPU)
+    SUPPORTED_DEVICES = ["cpu"]
 
     def __init__(
         self,
@@ -58,8 +58,8 @@ class WhisperRecognizer:
         Инициализация распознавателя Whisper.
 
         Args:
-            model_size: Размер модели Whisper (tiny, base, small, medium, large-v3)
-            device: Устройство для вычислений (cpu или cuda)
+            model_size: Размер модели Whisper (base, small, medium)
+            device: Устройство для вычислений (только cpu)
             language: Язык распознавания (ru, en и т.д.)
             sample_rate: Частота дискретизации аудио (по умолчанию 16000)
             vad_threshold: Порог срабатывания VAD (0.0-1.0, выше = менее чувствительный)
@@ -91,6 +91,7 @@ class WhisperRecognizer:
         self._model = None
         self._vad_session = None  # ONNX InferenceSession для VAD
         self._vad_state = None  # Combined state для VAD ONNX [2, 1, 128]
+        self._vad_context = None  # Context для Silero VAD V5+ (64 сэмпла для 16kHz)
         self._is_loaded = False
         self._lock = threading.Lock()
 
@@ -112,6 +113,8 @@ class WhisperRecognizer:
         self.on_final_result: Optional[Callable[[str], None]] = None
         self.on_loading_progress: Optional[Callable[[int], None]] = None
         self.on_error: Optional[Callable[[Exception], None]] = None
+        self.on_model_loaded: Optional[Callable[[str], None]] = None  # called with model_name after loading
+        self.on_model_unloaded: Optional[Callable[[], None]] = None  # called after unloading
 
         logger.info(
             f"WhisperRecognizer инициализирован: model={model_size}, "
@@ -140,13 +143,11 @@ class WhisperRecognizer:
             if self.on_loading_progress:
                 self.on_loading_progress(20)
 
-            # Определение типа вычислений
-            compute_type = "float16" if self.device == "cuda" else "int8"
-
+            # CPU-only: используем int8 для производительности
             self._model = WhisperModel(
                 self.model_size,
-                device=self.device,
-                compute_type=compute_type,
+                device="cpu",
+                compute_type="int8",
             )
 
             if self.on_loading_progress:
@@ -166,6 +167,11 @@ class WhisperRecognizer:
                 self.on_loading_progress(100)
 
             logger.info("Модели Whisper и VAD успешно загружены")
+
+            # Invoke callback for model loaded
+            if self.on_model_loaded:
+                self.on_model_loaded(self.model_size)
+
             return True
 
         except ImportError as e:
@@ -215,6 +221,11 @@ class WhisperRecognizer:
         # ONNX модель использует combined state вместо отдельных h и c
         self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
 
+        # Инициализируем context для Silero VAD V5+
+        # 64 сэмпла для 16kHz, 32 сэмпла для 8kHz
+        context_size = 64 if self.sample_rate == 16000 else 32
+        self._vad_context = np.zeros(context_size, dtype=np.float32)
+
         logger.debug("Silero VAD ONNX загружен (без PyTorch!)")
 
     def _update_activity_time(self) -> None:
@@ -241,13 +252,12 @@ class WhisperRecognizer:
 
     def _auto_unload(self) -> None:
         """Автоматическая выгрузка модели после периода неактивности."""
-        with self._unload_lock:
-            elapsed = time.time() - self._last_activity_time
-            if elapsed >= self.unload_timeout_sec and self._is_loaded:
-                logger.info(
-                    f"Автоматическая выгрузка модели после {elapsed:.0f}с неактивности"
-                )
-                self.unload()
+        elapsed = time.time() - self._last_activity_time
+        if elapsed >= self.unload_timeout_sec and self._is_loaded:
+            logger.info(
+                f"Автоматическая выгрузка модели после {elapsed:.0f}с неактивности"
+            )
+            self.unload()
 
     def process_audio(self, audio_data: bytes) -> Optional[str]:
         """
@@ -284,10 +294,10 @@ class WhisperRecognizer:
                     self._audio_buffer.append(audio_np)
                     self._speech_started = True
                     self._silence_samples = 0
+                    logger.debug(f"VAD: речь обнаружена, буфер: {len(self._audio_buffer)} чанков")
 
                     # Отправляем частичный результат (индикация что идёт запись)
                     if self.on_partial_result and len(self._audio_buffer) > 0:
-                        # Показываем что идёт запись
                         self.on_partial_result("...")
 
                 elif self._speech_started:
@@ -299,8 +309,6 @@ class WhisperRecognizer:
                     if self._silence_samples >= self._silence_threshold_samples:
                         # Пауза достигнута - транскрибируем
                         result = self._transcribe_buffer()
-
-                        # Сбрасываем состояние
                         self._reset_buffer()
 
                         if result and self.on_final_result:
@@ -320,6 +328,9 @@ class WhisperRecognizer:
         """
         Определить наличие речи в аудио через Silero VAD (ONNX).
 
+        Silero VAD V5+ требует context - 64 сэмпла от предыдущего чанка для 16kHz.
+        Без context модель возвращает prob ~0.001 даже при явной речи.
+
         Args:
             audio_np: Аудио в формате numpy array (float32, [-1, 1])
 
@@ -330,17 +341,28 @@ class WhisperRecognizer:
             return True  # Если VAD не загружен - считаем что есть речь
 
         try:
-            # Silero VAD ONNX требует ровно 512 семплов для 16kHz
-            # Обрабатываем аудио окнами по 512 семплов
+            # Silero VAD ONNX требует 512 семплов для 16kHz (256 для 8kHz)
+            # Плюс 64 сэмпла context от предыдущего чанка
             WINDOW_SIZE = 512 if self.sample_rate == 16000 else 256
+            CONTEXT_SIZE = 64 if self.sample_rate == 16000 else 32
             sr_input = np.array(self.sample_rate, dtype=np.int64)
 
             max_speech_prob = 0.0
+            chunk_count = 0
+
+            # Silero VAD V5+ требует context (64 сэмпла) + audio (512 сэмплов) = 576 на входе
+            # Обрабатываем аудио окнами, каждый раз добавляя context в начало
+            FULL_INPUT_SIZE = CONTEXT_SIZE + WINDOW_SIZE  # 64 + 512 = 576
 
             # Обрабатываем все полные окна
-            for i in range(0, len(audio_np) - WINDOW_SIZE + 1, WINDOW_SIZE):
-                window = audio_np[i:i + WINDOW_SIZE]
-                audio_input = window.reshape(1, -1).astype(np.float32)
+            offset = 0
+            while offset + WINDOW_SIZE <= len(audio_np):
+                chunk_count += 1
+
+                # Берём context + следующие 512 сэмплов
+                window = audio_np[offset:offset + WINDOW_SIZE]
+                audio_with_context = np.concatenate([self._vad_context, window])
+                audio_input = audio_with_context.reshape(1, -1).astype(np.float32)
 
                 ort_inputs = {
                     'input': audio_input,
@@ -354,9 +376,37 @@ class WhisperRecognizer:
                 speech_prob = output[0][0]
                 max_speech_prob = max(max_speech_prob, speech_prob)
 
+                # Обновляем context - последние 64 сэмпла текущего окна
+                self._vad_context = window[-CONTEXT_SIZE:].copy()
+
                 # Ранний выход если точно речь
                 if speech_prob >= self.vad_threshold:
                     return True
+
+                offset += WINDOW_SIZE
+
+            # Сохраняем context для следующего вызова (последние CONTEXT_SIZE сэмплов)
+            if len(audio_np) >= CONTEXT_SIZE:
+                self._vad_context = audio_np[-CONTEXT_SIZE:].copy()
+            else:
+                # Если audio_np короче CONTEXT_SIZE, берём часть из старого context
+                keep_from_old = CONTEXT_SIZE - len(audio_np)
+                self._vad_context = np.concatenate([
+                    self._vad_context[-keep_from_old:],
+                    audio_np
+                ])
+
+            # Логируем каждый чанк для отладки
+            if not hasattr(self, '_vad_log_counter'):
+                self._vad_log_counter = 0
+            self._vad_log_counter += 1
+
+            # Вычисляем RMS для диагностики
+            rms = np.sqrt(np.mean(audio_np ** 2))
+            max_val = np.max(np.abs(audio_np))
+
+            # Логируем каждый чанк пока отлаживаем
+            logger.debug(f"VAD: prob={max_speech_prob:.3f}, thr={self.vad_threshold}, rms={rms:.4f}, max={max_val:.4f}")
 
             return max_speech_prob >= self.vad_threshold
 
@@ -419,8 +469,25 @@ class WhisperRecognizer:
         self._speech_started = False
         self._silence_samples = 0
         # Сбрасываем state VAD ONNX для нового сегмента
+        self._reset_vad_state()
+
+    def _reset_vad_state(self) -> None:
+        """Сбросить внутреннее состояние VAD для новой сессии."""
         if self._vad_state is not None:
             self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+        # Сбрасываем context для Silero VAD V5+
+        if self._vad_context is not None:
+            context_size = 64 if self.sample_rate == 16000 else 32
+            self._vad_context = np.zeros(context_size, dtype=np.float32)
+        self._vad_log_counter = 0
+
+    def reset_for_new_session(self) -> None:
+        """
+        Подготовить распознаватель к новой сессии записи.
+        Сбрасывает VAD state и буфер.
+        """
+        logger.debug("Сброс состояния для новой сессии записи")
+        self._reset_buffer()
 
     def get_final_result(self) -> Optional[str]:
         """
@@ -431,18 +498,25 @@ class WhisperRecognizer:
         Returns:
             Распознанный текст или None
         """
+        logger.debug(f"get_final_result called: is_loaded={self._is_loaded}, buffer_len={len(self._audio_buffer)}")
+
         if not self._is_loaded:
+            logger.warning("get_final_result: модель не загружена!")
             return None
 
         with self._lock:
             if not self._audio_buffer:
+                logger.debug("get_final_result: буфер пуст, нечего транскрибировать")
                 return None
+
+            buffer_duration = sum(len(chunk) for chunk in self._audio_buffer) / self.sample_rate
+            logger.info(f"get_final_result: транскрибируем {buffer_duration:.2f}с аудио из {len(self._audio_buffer)} чанков")
 
             result = self._transcribe_buffer()
             self._reset_buffer()
 
-            if result and self.on_final_result:
-                self.on_final_result(result)
+            # НЕ вызываем callback здесь - результат возвращается напрямую
+            # callback используется только при автоматической транскрипции (по паузе)
 
             return result
 
@@ -474,6 +548,7 @@ class WhisperRecognizer:
             self._model = None
             self._vad_session = None
             self._vad_state = None
+            self._vad_context = None
 
             # Очищаем буфер
             self._audio_buffer.clear()
@@ -486,6 +561,10 @@ class WhisperRecognizer:
             gc.collect()
 
             logger.info("Модели Whisper и VAD ONNX выгружены")
+
+        # Invoke callback OUTSIDE of lock to avoid deadlock with UI
+        if self.on_model_unloaded:
+            self.on_model_unloaded()
 
     def set_language(self, language: str) -> None:
         """
