@@ -32,14 +32,14 @@ WHISPER_MODEL_SIZES = ["base", "small", "medium"]
 WHISPER_DEFAULT_MODEL = "small"
 WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
 WHISPER_DEFAULT_MIN_SILENCE_MS = 300
-WHISPER_DEFAULT_UNLOAD_TIMEOUT = 60  # Секунды до автовыгрузки (0 = отключить)
+WHISPER_DEFAULT_UNLOAD_TIMEOUT = 10  # Секунды до автовыгрузки (0 = отключить)
 
 # History
 MAX_HISTORY_ENTRIES = 15
 
 # Stats
-STATS_RETENTION_HOURS = 24
-STATS_INTERVAL_SECONDS = 600  # 10 минут
+STATS_RETENTION_HOURS = 2  # Хранить статистику только 2 часа
+STATS_INTERVAL_SECONDS = 10  # 10 секунд между записями
 
 # Logs
 LOG_RETENTION_DAYS = 1  # Keep logs for 24 hours only

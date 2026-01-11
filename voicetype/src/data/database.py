@@ -215,7 +215,7 @@ class Database:
 
     def get_stats_24h(self) -> List[Dict]:
         """
-        Получить статистику за последние 24 часа.
+        Получить статистику за последние STATS_RETENTION_HOURS часов.
 
         Returns:
             Список словарей с записями статистики
