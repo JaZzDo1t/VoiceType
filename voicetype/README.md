@@ -4,49 +4,85 @@
 
 ## Возможности
 
-- **Streaming распознавание речи** - текст появляется в реальном времени
-- **Автоматическая пунктуация** - точки, запятые, заглавные буквы
+- **Два движка распознавания**:
+  - **Vosk** - streaming, текст в реальном времени
+  - **Whisper** (faster-whisper) - высокое качество с VAD
+- **Автоматическая пунктуация** - точки, запятые, заглавные буквы (ONNX)
 - **Глобальные хоткеи** - управление записью из любого приложения
 - **Два режима вывода** - эмуляция клавиатуры или буфер обмена
 - **История сессий** - последние 15 записей с возможностью копирования
 - **Мониторинг ресурсов** - графики CPU/RAM за 24 часа
 - **Тёмная и светлая темы**
+- **Без PyTorch** - легковесный (~0.7 GB venv)
 
 ## Требования
 
 - Windows 10/11
 - Python 3.10 или 3.11
 - Микрофон
+- ~2 GB RAM (с Whisper small)
 
 ## Установка
 
-### Из исходников
+### 1. Клонирование репозитория
 
-1. Клонируйте репозиторий:
 ```bash
 git clone <repository-url>
-cd voicetype
+cd VoiceType/voicetype
 ```
 
-2. Создайте виртуальное окружение:
+### 2. Создание виртуального окружения
+
 ```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-3. Установите зависимости:
+### 3. Установка зависимостей
+
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Скачайте модели Vosk:
-   - [vosk-model-small-ru-0.22](https://alphacephei.com/vosk/models) (~50 МБ)
-   - Распакуйте в папку `models/`
+### 4. Скачивание моделей
 
-5. Запустите приложение:
+#### Vosk (обязательно для движка Vosk)
+
+Скачайте с https://alphacephei.com/vosk/models:
+- `vosk-model-small-ru-0.22` (~50 MB) - быстрая
+- `vosk-model-ru-0.42` (~1.5 GB) - качественная
+
+Распакуйте в папку `models/`:
+```
+models/
+  vosk-model-small-ru-0.22/
+  vosk-model-ru-0.42/
+```
+
+#### RUPunct ONNX (для пунктуации)
+
+Скачайте с https://huggingface.co/averkij/rupunct-onnx:
+- `rupunct-onnx/` (~680 MB) - полная
+- `rupunct-medium-onnx/` (~330 MB) - компактная
+
+```
+models/
+  rupunct-onnx/
+```
+
+#### Whisper и Silero VAD (автоматически)
+
+Модели faster-whisper и Silero VAD скачиваются автоматически при первом запуске:
+- Whisper: `~/.cache/huggingface/hub/`
+- Silero VAD: `~/.cache/silero-vad/`
+
+### 5. Запуск
+
 ```bash
 python run.py
 ```
+
+Или двойной клик на `run.bat`.
 
 ## Использование
 
@@ -59,71 +95,77 @@ python run.py
 
 ### Системный трей
 
-После запуска приложение сворачивается в системный трей. Доступные действия:
+После запуска приложение сворачивается в системный трей:
 - **Одиночный клик** - открыть настройки
 - **Двойной клик** - переключить запись
 - **Правый клик** - контекстное меню
 
 ### Настройки
 
-Откройте окно настроек для изменения:
-- Микрофона и языка распознавания
-- Размера модели (малая/большая)
-- Чувствительности VAD
-- Автопунктуации
-- Режима вывода текста
-- Горячих клавиш
-- Темы оформления
+- **Движок** - Vosk (streaming) или Whisper (качество)
+- **Модель** - размер модели распознавания
+- **Язык** - ru, en и другие
+- **Пунктуация** - автоматическая расстановка знаков
+- **Режим вывода** - клавиатура или буфер обмена
+- **Тема** - тёмная или светлая
 
 ## Структура проекта
 
 ```
 voicetype/
 ├── src/
-│   ├── main.py           # Точка входа
-│   ├── app.py            # Главный контроллер
-│   ├── core/             # Ядро (аудио, распознавание)
-│   ├── ui/               # Интерфейс (PyQt6)
-│   ├── data/             # Данные (конфиг, БД)
-│   └── utils/            # Утилиты
-├── resources/
-│   └── icons/            # Иконки
-├── models/               # Модели Vosk
-├── tests/                # Тесты
-├── build/                # Сборка
+│   ├── main.py              # Точка входа
+│   ├── app.py               # Главный контроллер
+│   ├── core/
+│   │   ├── recognizer.py        # Vosk движок
+│   │   ├── whisper_recognizer.py # Whisper движок
+│   │   ├── audio_capture.py     # Захват аудио
+│   │   ├── punctuation.py       # ONNX пунктуация
+│   │   └── output_manager.py    # Вывод текста
+│   ├── ui/                  # PyQt6 интерфейс
+│   ├── data/                # Конфиг, БД, модели
+│   └── utils/               # Утилиты
+├── models/                  # ML модели (скачать отдельно)
+├── tests/                   # Тесты
 └── requirements.txt
 ```
 
 ## Технологии
 
-- **Vosk** - локальное распознавание речи
-- **Silero TE** - автоматическая пунктуация
+- **Vosk** - streaming распознавание речи
+- **faster-whisper** - качественное распознавание (CTranslate2)
+- **Silero VAD** - детекция голоса (ONNX)
+- **RUPunct** - пунктуация (ONNX)
 - **PyQt6** - графический интерфейс
-- **pynput** - глобальные хоткеи и эмуляция клавиатуры
+- **pynput** - глобальные хоткеи
 - **PyAudio** - захват аудио
 
 ## Сборка в exe
 
 ```bash
-# Установите PyInstaller
 pip install pyinstaller
-
-# Соберите приложение
 pyinstaller build/voicetype.spec
 ```
 
-Результат будет в папке `dist/VoiceType/`.
+Результат: `dist/VoiceType/`
 
 ## Конфигурация
 
-Файл конфигурации: `%APPDATA%/VoiceType/config.yaml`
+Файл: `%APPDATA%/VoiceType/config.yaml`
 
 ```yaml
 audio:
   microphone_id: "default"
   language: "ru"
+  engine: "whisper"  # или "vosk"
   model: "small"
   vad_sensitivity: 0.5
+
+whisper:
+  model: "small"
+  device: "cpu"
+  vad_threshold: 0.3
+  unload_timeout: 60
 
 recognition:
   punctuation_enabled: true
@@ -146,5 +188,7 @@ MIT License
 
 ## Благодарности
 
-- [Vosk](https://alphacephei.com/vosk/) - за отличную модель распознавания
-- [Silero](https://github.com/snakers4/silero-models) - за модель пунктуации
+- [Vosk](https://alphacephei.com/vosk/) - streaming распознавание
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) - оптимизированный Whisper
+- [Silero](https://github.com/snakers4/silero-models) - VAD модель
+- [RUPunct](https://huggingface.co/averkij/rupunct-onnx) - пунктуация
