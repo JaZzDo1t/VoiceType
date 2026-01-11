@@ -1,11 +1,10 @@
 # Core
 vosk>=0.3.45,<1.0.0
-torch>=2.0.0,<3.0.0
-transformers>=4.30.0,<5.0.0
+faster-whisper>=1.0.0,<2.0.0
 pyaudio>=0.2.14
 numpy>=1.20.0,<2.0.0
 
-# ONNX Runtime (lightweight inference for punctuation)
+# ONNX Runtime (VAD and punctuation inference - no PyTorch needed!)
 onnxruntime>=1.16.0,<2.0.0
 tokenizers>=0.15.0,<1.0.0
 

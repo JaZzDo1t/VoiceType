@@ -80,6 +80,7 @@ class OutputManager:
         """
         Эмуляция набора текста через pynput.
         Перед набором переключает раскладку на нужный язык.
+        Если не удаётся - использует clipboard + Ctrl+V как fallback.
 
         Args:
             text: Текст для набора
@@ -88,16 +89,27 @@ class OutputManager:
             True если успешно
         """
         try:
-            from pynput.keyboard import Controller
+            from pynput.keyboard import Controller, Key
 
             if self._keyboard_controller is None:
                 self._keyboard_controller = Controller()
 
             # Переключаем раскладку на нужный язык
-            self._switch_keyboard_layout(self._language)
+            layout_switched = self._switch_keyboard_layout(self._language)
 
             # Задержка после смены раскладки для надёжности
             time.sleep(LAYOUT_SWITCH_DELAY)
+
+            # Проверяем текущую раскладку
+            current_layout = self._get_current_layout_language()
+
+            # Если раскладка не переключилась и текст содержит кириллицу -
+            # используем clipboard + Ctrl+V как более надёжный метод
+            has_cyrillic = any('\u0400' <= c <= '\u04FF' for c in text)
+
+            if has_cyrillic and current_layout != "ru":
+                logger.warning("Layout not switched to Russian, using clipboard fallback")
+                return self._output_via_clipboard_paste(text)
 
             # Печатаем текст
             self._keyboard_controller.type(text)
@@ -111,11 +123,99 @@ class OutputManager:
 
         except Exception as e:
             logger.error(f"Failed to type text: {e}")
+            # Fallback на clipboard
+            logger.info("Falling back to clipboard paste")
+            return self._output_via_clipboard_paste(text)
+
+    def _output_via_clipboard_paste(self, text: str) -> bool:
+        """
+        Вывод текста через буфер обмена и Ctrl+V.
+        Более надёжный метод, не зависит от раскладки.
+
+        Args:
+            text: Текст для вывода
+
+        Returns:
+            True если успешно
+        """
+        try:
+            import pyperclip
+            from pynput.keyboard import Controller, Key
+
+            if self._keyboard_controller is None:
+                self._keyboard_controller = Controller()
+
+            # Сохраняем текущее содержимое буфера
+            try:
+                old_clipboard = pyperclip.paste()
+            except Exception:
+                old_clipboard = None
+
+            # Копируем текст в буфер
+            pyperclip.copy(text)
+            time.sleep(0.05)  # Небольшая задержка
+
+            # Вставляем через Ctrl+V
+            with self._keyboard_controller.pressed(Key.ctrl):
+                self._keyboard_controller.tap('v')
+
+            time.sleep(0.05)
+
+            # Восстанавливаем буфер (опционально)
+            # Закомментировано, т.к. может мешать пользователю
+            # if old_clipboard is not None:
+            #     time.sleep(0.1)
+            #     pyperclip.copy(old_clipboard)
+
+            logger.debug(f"Pasted via Ctrl+V: {text[:50]}...")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to paste via clipboard: {e}")
             return False
+
+    def _get_current_layout_language(self) -> Optional[str]:
+        """
+        Получить текущий язык раскладки клавиатуры.
+
+        Returns:
+            "ru", "en" или None если не удалось определить
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+
+            # Получаем HKL текущей раскладки для активного окна
+            hwnd = user32.GetForegroundWindow()
+            thread_id = user32.GetWindowThreadProcessId(hwnd, None)
+
+            user32.GetKeyboardLayout.argtypes = [wintypes.DWORD]
+            user32.GetKeyboardLayout.restype = wintypes.HKL
+
+            hkl = user32.GetKeyboardLayout(thread_id)
+
+            # Младшие 16 бит HKL - это Language ID (LANGID)
+            lang_id = hkl & 0xFFFF
+
+            # Russian = 0x0419, English US = 0x0409
+            if lang_id == 0x0419:
+                return "ru"
+            elif lang_id == 0x0409:
+                return "en"
+            else:
+                logger.debug(f"Unknown layout language ID: 0x{lang_id:04X}")
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to get current layout: {e}")
+            return None
 
     def _switch_keyboard_layout(self, language: str) -> bool:
         """
         Переключить раскладку клавиатуры на нужный язык.
+        Использует несколько методов для надёжности.
 
         Args:
             language: "ru" или "en"
@@ -127,33 +227,38 @@ class OutputManager:
             import ctypes
             from ctypes import wintypes
 
+            # Проверяем текущую раскладку
+            current = self._get_current_layout_language()
+            if current == language:
+                logger.debug(f"Layout already set to: {language}")
+                return True
+
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+
             # Коды раскладок Windows (KLID - Keyboard Layout ID)
-            # Формат: строка из 8 hex-цифр
             layout_klid = {
                 "ru": "00000419",
                 "en": "00000409",
             }
-
             klid = layout_klid.get(language, "00000409")
 
-            user32 = ctypes.WinDLL('user32', use_last_error=True)
-
-            # Настраиваем типы для LoadKeyboardLayoutW
+            # Метод 1: LoadKeyboardLayoutW с KLF_ACTIVATE
             user32.LoadKeyboardLayoutW.argtypes = [wintypes.LPCWSTR, wintypes.UINT]
             user32.LoadKeyboardLayoutW.restype = wintypes.HKL
 
-            # KLF_ACTIVATE = 0x00000001 - активировать раскладку
             KLF_ACTIVATE = 0x00000001
-
-            # LoadKeyboardLayoutW загружает и активирует раскладку, возвращает HKL
             hkl = user32.LoadKeyboardLayoutW(klid, KLF_ACTIVATE)
 
             if not hkl:
                 logger.warning(f"Failed to load keyboard layout: {klid}")
                 return False
 
-            # Дополнительно отправляем WM_INPUTLANGCHANGEREQUEST активному окну
-            # lParam должен быть HKL (результат LoadKeyboardLayoutW)
+            # Метод 2: ActivateKeyboardLayout для текущего потока
+            user32.ActivateKeyboardLayout.argtypes = [wintypes.HKL, wintypes.UINT]
+            user32.ActivateKeyboardLayout.restype = wintypes.HKL
+            user32.ActivateKeyboardLayout(hkl, 0)
+
+            # Метод 3: WM_INPUTLANGCHANGEREQUEST для активного окна
             hwnd = user32.GetForegroundWindow()
             if hwnd:
                 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
@@ -161,8 +266,23 @@ class OutputManager:
                 # WM_INPUTLANGCHANGEREQUEST = 0x0050
                 user32.PostMessageW(hwnd, 0x0050, 0, hkl)
 
-            logger.debug(f"Switched keyboard layout to: {language} (HKL=0x{hkl:08X})")
-            return True
+                # Также пробуем SendMessage для синхронного переключения
+                user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                                wintypes.WPARAM, wintypes.LPARAM]
+                user32.SendMessageW(hwnd, 0x0050, 0, hkl)
+
+            # Даём время на переключение
+            time.sleep(0.05)
+
+            # Проверяем результат
+            new_layout = self._get_current_layout_language()
+            if new_layout == language:
+                logger.debug(f"Successfully switched layout to: {language}")
+                return True
+            else:
+                logger.warning(f"Layout switch may have failed. Target: {language}, Current: {new_layout}")
+                # Всё равно возвращаем True - попытка была сделана
+                return True
 
         except Exception as e:
             logger.warning(f"Failed to switch keyboard layout: {e}")

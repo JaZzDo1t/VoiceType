@@ -24,6 +24,7 @@ class HotkeyEdit(QWidget):
         self._current_hotkey: str = ""
         self._is_recording: bool = False
         self._pressed_keys: Set[str] = set()
+        self._max_pressed_keys: Set[str] = set()  # Максимальный набор нажатых клавиш
 
         self._setup_ui()
 
@@ -66,6 +67,7 @@ class HotkeyEdit(QWidget):
         """Начать запись хоткея."""
         self._is_recording = True
         self._pressed_keys.clear()
+        self._max_pressed_keys.clear()
         self._record_btn.setText("Готово")
         self._line_edit.setText("Нажмите комбинацию...")
         self._line_edit.setFocus()
@@ -98,6 +100,9 @@ class HotkeyEdit(QWidget):
 
         if key_str:
             self._pressed_keys.add(key_str)
+            # Сохраняем максимальный набор нажатых клавиш
+            if len(self._pressed_keys) > len(self._max_pressed_keys):
+                self._max_pressed_keys = self._pressed_keys.copy()
             self._update_recording_display()
 
         event.accept()
@@ -107,9 +112,15 @@ class HotkeyEdit(QWidget):
         if not self._is_recording:
             return
 
-        # Если есть нажатые клавиши - сохраняем как хоткей
-        if self._pressed_keys:
-            self._current_hotkey = self._format_hotkey(self._pressed_keys)
+        key = event.key()
+        key_str = self._key_to_string(key, event.modifiers())
+
+        if key_str:
+            self._pressed_keys.discard(key_str)
+
+        # Сохраняем когда ВСЕ клавиши отпущены
+        if not self._pressed_keys and self._max_pressed_keys:
+            self._current_hotkey = self._format_hotkey(self._max_pressed_keys)
             self._stop_recording()
             self.hotkey_changed.emit(self._current_hotkey)
 
@@ -171,24 +182,31 @@ class HotkeyEdit(QWidget):
         mod_order = ["ctrl", "alt", "shift", "win"]
 
         modifiers = []
-        main_key = None
+        main_keys = []  # Поддерживаем несколько обычных клавиш
 
         for k in keys:
             if k in mod_order:
                 modifiers.append(k)
             else:
-                main_key = k
+                main_keys.append(k)
 
-        # Сортируем модификаторы
+        # Сортируем модификаторы по порядку
         modifiers.sort(key=lambda x: mod_order.index(x) if x in mod_order else 99)
 
-        # Формируем строку
-        parts = modifiers + ([main_key] if main_key else [])
+        # Сортируем обычные клавиши алфавитно
+        main_keys.sort()
+
+        # Формируем строку: модификаторы + обычные клавиши
+        parts = modifiers + main_keys
         return "+".join(parts)
 
     def _update_recording_display(self):
         """Обновить отображение во время записи."""
-        if self._pressed_keys:
+        # Показываем максимальный набор (полную комбинацию)
+        if self._max_pressed_keys:
+            display = self._format_hotkey(self._max_pressed_keys)
+            self._line_edit.setText(display.upper())
+        elif self._pressed_keys:
             display = self._format_hotkey(self._pressed_keys)
             self._line_edit.setText(display.upper())
         else:
@@ -205,6 +223,7 @@ class HotkeyEdit(QWidget):
         """Очистить хоткей."""
         self._current_hotkey = ""
         self._pressed_keys.clear()
+        self._max_pressed_keys.clear()
         self._update_display()
         self.hotkey_changed.emit("")
 

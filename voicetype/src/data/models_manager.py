@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger
 
-from src.utils.constants import SUPPORTED_LANGUAGES, MODEL_SIZES
+from src.utils.constants import (
+    SUPPORTED_LANGUAGES, MODEL_SIZES,
+    WHISPER_MODEL_SIZES, WHISPER_DEFAULT_MODEL
+)
 
 
 class ModelsManager:
@@ -42,6 +45,15 @@ class ModelsManager:
         "multi": "v2_4lang_q.pt",  # Многоязычная модель
         "ru": "v4_ru.pt",
         "en": "v4_en.pt",
+    }
+
+    # Информация о моделях Whisper (размер в MB)
+    WHISPER_MODEL_INFO = {
+        "tiny": {"size_mb": 75, "params": "39M", "quality": "low"},
+        "base": {"size_mb": 145, "params": "74M", "quality": "medium"},
+        "small": {"size_mb": 488, "params": "244M", "quality": "good"},
+        "medium": {"size_mb": 1500, "params": "769M", "quality": "high"},
+        "large-v3": {"size_mb": 3000, "params": "1.5B", "quality": "best"},
     }
 
     def __init__(self, models_dir: Path = None):
@@ -224,6 +236,154 @@ class ModelsManager:
         except ImportError:
             return False
 
+    # ========== Whisper методы ==========
+
+    def get_whisper_cache_dir(self) -> Path:
+        """
+        Получить директорию кеша моделей Whisper.
+
+        faster-whisper использует Hugging Face Hub для скачивания,
+        модели кешируются в ~/.cache/huggingface/hub/
+
+        Returns:
+            Path к директории кеша
+        """
+        # Hugging Face Hub кеш
+        hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+        return hf_cache
+
+    def is_whisper_model_cached(self, model_size: str) -> bool:
+        """
+        Проверить, скачана ли модель Whisper.
+
+        Args:
+            model_size: Размер модели (tiny, base, small, medium, large-v3)
+
+        Returns:
+            True если модель уже скачана в кеш
+        """
+        if model_size not in WHISPER_MODEL_SIZES:
+            logger.warning(f"Unknown Whisper model size: {model_size}")
+            return False
+
+        cache_dir = self.get_whisper_cache_dir()
+        if not cache_dir.exists():
+            return False
+
+        # faster-whisper использует модели из Systran/faster-whisper-*
+        # Паттерн кеширования: models--Systran--faster-whisper-{size}
+        model_cache_name = f"models--Systran--faster-whisper-{model_size}"
+        model_path = cache_dir / model_cache_name
+
+        if model_path.exists():
+            # Проверяем что там есть файлы модели
+            snapshots = model_path / "snapshots"
+            if snapshots.exists() and any(snapshots.iterdir()):
+                return True
+
+        return False
+
+    def get_whisper_model_info(self, model_size: str) -> Optional[Dict]:
+        """
+        Получить информацию о модели Whisper.
+
+        Args:
+            model_size: Размер модели
+
+        Returns:
+            Словарь с информацией или None
+        """
+        if model_size not in self.WHISPER_MODEL_INFO:
+            return None
+
+        info = self.WHISPER_MODEL_INFO[model_size].copy()
+        info["name"] = model_size
+        info["cached"] = self.is_whisper_model_cached(model_size)
+        return info
+
+    def get_available_whisper_models(self) -> List[Dict]:
+        """
+        Получить список всех моделей Whisper с информацией.
+
+        Returns:
+            Список словарей с информацией о моделях
+        """
+        models = []
+        for size in WHISPER_MODEL_SIZES:
+            info = self.get_whisper_model_info(size)
+            if info:
+                models.append(info)
+        return models
+
+    def get_whisper_info(self) -> Dict:
+        """
+        Получить общую информацию о Whisper.
+
+        Returns:
+            Словарь с информацией о Whisper
+        """
+        cached_models = [
+            size for size in WHISPER_MODEL_SIZES
+            if self.is_whisper_model_cached(size)
+        ]
+
+        return {
+            "name": "faster-whisper",
+            "description": "OpenAI Whisper with CTranslate2 (4x faster)",
+            "available_sizes": WHISPER_MODEL_SIZES,
+            "cached_models": cached_models,
+            "default_model": WHISPER_DEFAULT_MODEL,
+            "cache_dir": str(self.get_whisper_cache_dir()),
+            "features": ["punctuation", "vad", "multilingual"],
+            "languages": ["ru", "en", "auto"],
+            "available": self._is_faster_whisper_available(),
+        }
+
+    def _is_faster_whisper_available(self) -> bool:
+        """Проверить, установлен ли faster-whisper."""
+        try:
+            import faster_whisper
+            return True
+        except ImportError:
+            return False
+
+    def is_cuda_available(self) -> bool:
+        """
+        Проверить доступность CUDA для Whisper.
+
+        Returns:
+            True если CUDA доступна
+        """
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
+
+    def get_cuda_info(self) -> Optional[Dict]:
+        """
+        Получить информацию о CUDA устройстве.
+
+        Returns:
+            Словарь с информацией или None
+        """
+        if not self.is_cuda_available():
+            return None
+
+        try:
+            import torch
+            return {
+                "available": True,
+                "device_count": torch.cuda.device_count(),
+                "device_name": torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else None,
+                "memory_total_gb": round(
+                    torch.cuda.get_device_properties(0).total_memory / (1024**3), 1
+                ) if torch.cuda.device_count() > 0 else None,
+            }
+        except Exception as e:
+            logger.warning(f"Error getting CUDA info: {e}")
+            return {"available": True, "error": str(e)}
+
     def get_models_summary(self) -> Dict:
         """
         Получить сводку по всем моделям.
@@ -231,13 +391,17 @@ class ModelsManager:
         Returns:
             {
                 "vosk": [list of available models],
+                "whisper": {info},
                 "silero_te": {info},
+                "cuda": {info},
                 "models_dir": str
             }
         """
         return {
             "vosk": self.get_available_vosk_models(),
+            "whisper": self.get_whisper_info(),
             "silero_te": self.get_silero_te_info(),
+            "cuda": self.get_cuda_info(),
             "models_dir": str(self.models_dir),
             "models_dir_exists": self.models_dir.exists()
         }

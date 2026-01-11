@@ -25,6 +25,18 @@ AUDIO_FORMAT_BITS = 16
 SUPPORTED_LANGUAGES = ["ru", "en"]
 MODEL_SIZES = ["small", "large"]
 
+# Recognition engines
+ENGINE_VOSK = "vosk"
+ENGINE_WHISPER = "whisper"
+SUPPORTED_ENGINES = [ENGINE_VOSK, ENGINE_WHISPER]
+
+# Whisper settings
+WHISPER_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
+WHISPER_DEFAULT_MODEL = "small"
+WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
+WHISPER_DEFAULT_MIN_SILENCE_MS = 300
+WHISPER_DEFAULT_UNLOAD_TIMEOUT = 60  # seconds
+
 # History
 MAX_HISTORY_ENTRIES = 15
 

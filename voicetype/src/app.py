@@ -18,6 +18,7 @@ from src.data.database import get_database
 from src.data.models_manager import get_models_manager
 from src.core.audio_capture import AudioCapture
 from src.core.recognizer import Recognizer
+from src.core.whisper_recognizer import WhisperRecognizer
 from src.core.punctuation import Punctuation, PunctuationDisabled, RUPunctONNX
 from src.core.lazy_model_manager import LazyModelManager
 from src.core.output_manager import OutputManager
@@ -31,7 +32,10 @@ from src.utils.system_info import get_process_cpu, get_process_memory
 from src.utils.constants import (
     TRAY_STATE_READY, TRAY_STATE_RECORDING,
     TRAY_STATE_LOADING, TRAY_STATE_ERROR,
-    STATS_INTERVAL_SECONDS
+    STATS_INTERVAL_SECONDS,
+    ENGINE_VOSK, ENGINE_WHISPER,
+    WHISPER_DEFAULT_MODEL, WHISPER_DEFAULT_VAD_THRESHOLD,
+    WHISPER_DEFAULT_MIN_SILENCE_MS, WHISPER_DEFAULT_UNLOAD_TIMEOUT
 )
 
 
@@ -80,6 +84,7 @@ class VoiceTypeApp(QObject):
         self._session_text = ""
         self._session_start: Optional[datetime] = None
         self._vosk_model_path: Optional[str] = None  # Путь к модели Vosk для перезагрузки
+        self._current_engine: str = ENGINE_VOSK  # Current recognition engine
 
         # Таймеры
         self._stats_timer: Optional[QTimer] = None
@@ -175,6 +180,9 @@ class VoiceTypeApp(QObject):
         self._main_window.tab_main.model_changed.connect(self._on_model_changed)
         self._main_window.tab_main.output_mode_changed.connect(self._on_output_mode_changed)
         self._main_window.tab_main.autostart_changed.connect(self._on_autostart_changed)
+        # Engine changed signal (if tab_main supports it)
+        if hasattr(self._main_window.tab_main, 'engine_changed'):
+            self._main_window.tab_main.engine_changed.connect(self._on_engine_changed)
 
         # TabHotkeys - один toggle хоткей вместо двух отдельных
         self._main_window.tab_hotkeys.toggle_hotkey_changed.connect(self._on_toggle_hotkey_changed)
@@ -217,12 +225,27 @@ class VoiceTypeApp(QObject):
 
         logger.debug("Models unloaded, memory freed")
 
-    def _load_vosk_model(self) -> tuple[bool, str]:
+    def _create_recognizer(self) -> bool:
         """
-        Загрузить модель Vosk.
+        Create recognizer based on selected engine.
 
         Returns:
-            Tuple (success, model_name)
+            True if recognizer created successfully
+        """
+        engine = self._config.get("audio.engine", ENGINE_VOSK)
+        self._current_engine = engine
+
+        if engine == ENGINE_WHISPER:
+            return self._create_whisper_recognizer()
+        else:
+            return self._create_vosk_recognizer()
+
+    def _create_vosk_recognizer(self) -> bool:
+        """
+        Create and load Vosk recognizer.
+
+        Returns:
+            True if successful
         """
         language = self._config.get("audio.language", "ru")
         model_size = self._config.get("audio.model", "small")
@@ -232,7 +255,7 @@ class VoiceTypeApp(QObject):
 
         if not model_path:
             logger.error(f"Model not found: {language}/{model_size}")
-            return False, model_name
+            return False
 
         # Сохраняем путь для перезагрузки
         self._vosk_model_path = str(model_path)
@@ -240,15 +263,45 @@ class VoiceTypeApp(QObject):
         # Обновляем статус загрузки
         self._loading_status_signal.emit("Загрузка Vosk", model_name)
 
-        # Загружаем Vosk
+        # Создаём Vosk recognizer
         self._recognizer = Recognizer(self._vosk_model_path)
         self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
         self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
 
-        if not self._recognizer.load_model():
-            return False, model_name
+        return True
 
-        return True, model_name
+    def _create_whisper_recognizer(self) -> bool:
+        """
+        Create Whisper recognizer with VAD.
+
+        Returns:
+            True if successful (Whisper loads lazily on first process_audio)
+        """
+        model_size = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
+        device = self._config.get("audio.whisper.device", "cpu")
+        language = self._config.get("audio.language", "ru")
+        vad_threshold = self._config.get("audio.whisper.vad_threshold", WHISPER_DEFAULT_VAD_THRESHOLD)
+        min_silence_ms = self._config.get("audio.whisper.min_silence_ms", WHISPER_DEFAULT_MIN_SILENCE_MS)
+        unload_timeout = self._config.get("audio.whisper.unload_timeout", WHISPER_DEFAULT_UNLOAD_TIMEOUT)
+
+        # Обновляем статус загрузки
+        self._loading_status_signal.emit("Подготовка Whisper", model_size)
+
+        self._recognizer = WhisperRecognizer(
+            model_size=model_size,
+            device=device,
+            language=language,
+            vad_threshold=vad_threshold,
+            min_silence_duration_ms=min_silence_ms,
+            unload_timeout_sec=unload_timeout,
+        )
+
+        # Connect callbacks
+        self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
+        self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
+
+        logger.info(f"Whisper recognizer created: model={model_size}, device={device}, language={language}")
+        return True  # Whisper loads lazily
 
     def _load_models_async(self):
         """Загрузить модели в фоновом потоке."""
@@ -257,26 +310,40 @@ class VoiceTypeApp(QObject):
                 # Выгружаем старые модели перед загрузкой новых
                 self._unload_models()
 
-                # Загружаем Vosk
-                success, model_name = self._load_vosk_model()
-                if not success:
-                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, model_name)
+                # Создаём recognizer на основе выбранного движка
+                if not self._create_recognizer():
+                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
                     return
 
-                # Загружаем пунктуацию через LazyModelManager
-                if self._config.get("recognition.punctuation_enabled", True):
-                    self._loading_status_signal.emit("Загрузка RUPunct ONNX", model_name)
-                    if self._lazy_model_manager.load_punctuation():
-                        self._punctuation = self._lazy_model_manager._punctuation
+                # Для Vosk загружаем модель сразу
+                if self._current_engine == ENGINE_VOSK:
+                    if not self._recognizer.load_model():
+                        self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
+                        return
+                    model_name = Path(self._vosk_model_path).name if self._vosk_model_path else "vosk"
+                else:
+                    # Whisper: модель загрузится лениво при первом process_audio
+                    model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
+
+                # Загружаем пунктуацию только для Vosk (Whisper имеет встроенную пунктуацию)
+                if self._current_engine == ENGINE_VOSK:
+                    if self._config.get("recognition.punctuation_enabled", True):
+                        self._loading_status_signal.emit("Загрузка RUPunct ONNX", model_name)
+                        if self._lazy_model_manager.load_punctuation():
+                            self._punctuation = self._lazy_model_manager._punctuation
+                        else:
+                            logger.warning("LazyModelManager punctuation failed, using basic")
+                            self._punctuation = PunctuationDisabled()
                     else:
-                        logger.warning("LazyModelManager punctuation failed, using basic")
                         self._punctuation = PunctuationDisabled()
                 else:
+                    # Whisper имеет встроенную пунктуацию, пропускаем Silero TE
                     self._punctuation = PunctuationDisabled()
+                    logger.info("Skipping punctuation loading for Whisper (built-in punctuation)")
 
                 # Готово
                 self._models_loaded_signal.emit(TRAY_STATE_READY, model_name)
-                logger.info("Models loaded successfully")
+                logger.info(f"Models loaded successfully (engine: {self._current_engine})")
 
             except Exception as e:
                 logger.error(f"Failed to load models: {e}")
@@ -300,11 +367,16 @@ class VoiceTypeApp(QObject):
 
                 gc.collect()
 
-                # Загружаем Vosk
-                success, model_name = self._load_vosk_model()
-                if not success:
-                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, model_name)
+                # Создаём и загружаем Vosk
+                if not self._create_vosk_recognizer():
+                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
                     return
+
+                if not self._recognizer.load_model():
+                    self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
+                    return
+
+                model_name = Path(self._vosk_model_path).name if self._vosk_model_path else "vosk"
 
                 # Silero TE уже загружен, не трогаем его
                 logger.debug(f"Loading state: Vosk reloaded, Silero TE preserved (loaded: {self._punctuation.is_loaded() if self._punctuation else False})")
@@ -442,37 +514,47 @@ class VoiceTypeApp(QObject):
             logger.warning("Models not loaded yet, ignoring start_recording")
             return
 
-        logger.info("Starting recording...")
+        logger.info(f"Starting recording... (engine: {self._current_engine})")
 
         # Отменяем таймер автовыгрузки если запущен
         if self._lazy_model_manager:
             self._lazy_model_manager.cancel_auto_unload_timer()
 
-            # Загружаем Vosk если был выгружен
-            if not self._recognizer or not self._recognizer.is_loaded():
-                if self._vosk_model_path:
-                    logger.info("Loading Vosk model for recording...")
-                    self._recognizer = Recognizer(self._vosk_model_path)
-                    self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
-                    self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
-                    if self._recognizer.load_model():
-                        logger.info("Vosk model loaded")
-                        self._main_window.tab_main.set_vosk_status(True, Path(self._vosk_model_path).name)
+            # Обрабатываем перезагрузку модели в зависимости от движка
+            if self._current_engine == ENGINE_VOSK:
+                # Загружаем Vosk если был выгружен
+                if not self._recognizer or not self._recognizer.is_loaded():
+                    if self._vosk_model_path:
+                        logger.info("Loading Vosk model for recording...")
+                        self._recognizer = Recognizer(self._vosk_model_path)
+                        self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
+                        self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
+                        if self._recognizer.load_model():
+                            logger.info("Vosk model loaded")
+                            self._main_window.tab_main.set_vosk_status(True, Path(self._vosk_model_path).name)
+                        else:
+                            logger.error("Failed to load Vosk model")
+                            self._tray_icon.show_notification("Ошибка", "Не удалось загрузить модель")
+                            return
                     else:
-                        logger.error("Failed to load Vosk model")
-                        self._tray_icon.show_notification("Ошибка", "Не удалось загрузить модель")
+                        logger.error("No Vosk model path saved")
                         return
-                else:
-                    logger.error("No Vosk model path saved")
-                    return
 
-            # Загружаем пунктуацию если была выгружена И если она включена в конфиге
-            if self._config.get("recognition.punctuation_enabled", True):
-                if not self._lazy_model_manager.is_punctuation_loaded():
-                    logger.info("Loading punctuation model for recording...")
-                    if self._lazy_model_manager.load_punctuation():
-                        self._punctuation = self._lazy_model_manager._punctuation
-                        logger.info("Punctuation model loaded")
+                # Загружаем пунктуацию если была выгружена И если она включена в конфиге
+                if self._config.get("recognition.punctuation_enabled", True):
+                    if not self._lazy_model_manager.is_punctuation_loaded():
+                        logger.info("Loading punctuation model for recording...")
+                        if self._lazy_model_manager.load_punctuation():
+                            self._punctuation = self._lazy_model_manager._punctuation
+                            logger.info("Punctuation model loaded")
+            else:
+                # Whisper: проверяем что recognizer создан (модель загрузится лениво)
+                if not self._recognizer:
+                    logger.info("Re-creating Whisper recognizer...")
+                    if not self._create_whisper_recognizer():
+                        logger.error("Failed to create Whisper recognizer")
+                        self._tray_icon.show_notification("Ошибка", "Не удалось создать Whisper")
+                        return
 
         self._is_recording = True
         self._session_text = ""
@@ -586,11 +668,11 @@ class VoiceTypeApp(QObject):
         if not text:
             return
 
-        # Применяем пунктуацию
+        # Применяем пунктуацию только для Vosk (Whisper имеет встроенную пунктуацию)
         logger.debug(f"Processing final text: '{text[:50]}...'")
-        logger.debug(f"Punctuation: {self._punctuation}, is_loaded: {self._punctuation.is_loaded() if self._punctuation else 'N/A'}")
+        logger.debug(f"Engine: {self._current_engine}, Punctuation: {self._punctuation}, is_loaded: {self._punctuation.is_loaded() if self._punctuation else 'N/A'}")
 
-        if self._punctuation and self._punctuation.is_loaded():
+        if self._current_engine == ENGINE_VOSK and self._punctuation and self._punctuation.is_loaded():
             original = text
             text = self._punctuation.enhance(text)
             logger.info(f"Punctuation applied: '{original[:30]}...' -> '{text[:30]}...'")
@@ -705,6 +787,14 @@ class VoiceTypeApp(QObject):
         self._tray_icon.set_state(TRAY_STATE_LOADING)
         self._main_window.set_loading(True)
         self._reload_vosk_only_async()
+
+    def _on_engine_changed(self, engine: str):
+        """Recognition engine changed - need to reload."""
+        logger.info(f"Engine changed to: {engine}")
+        self._models_loaded = False
+        self._tray_icon.set_state(TRAY_STATE_LOADING)
+        self._main_window.set_loading(True)
+        self._load_models_async()
 
     def _on_output_mode_changed(self, mode: str):
         """Режим вывода изменён."""
