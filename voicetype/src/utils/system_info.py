@@ -143,6 +143,7 @@ class _ProcessMonitor:
         # Инициализируем базовую линию - первый вызов всегда 0%
         self._process.cpu_percent(interval=None)
         self._last_cpu = 0.0
+        self._cpu_count = psutil.cpu_count(logical=True) or 1
 
     @classmethod
     def get_instance(cls) -> "_ProcessMonitor":
@@ -151,12 +152,14 @@ class _ProcessMonitor:
         return cls._instance
 
     def get_cpu(self) -> float:
-        """Получить CPU% с использованием кэшированной базовой линии."""
+        """Получить CPU% нормализованный до 0-100% (делим на количество ядер)."""
         try:
             # interval=None использует время с прошлого вызова
             cpu = self._process.cpu_percent(interval=None)
-            self._last_cpu = cpu
-            return cpu
+            # Нормализуем: psutil может вернуть до N*100% где N = кол-во ядер
+            cpu_normalized = cpu / self._cpu_count
+            self._last_cpu = cpu_normalized
+            return cpu_normalized
         except Exception as e:
             logger.error(f"Failed to get process CPU: {e}")
             return self._last_cpu

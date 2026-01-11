@@ -1,4 +1,0 @@
-# This directory contains ML models
-# Download models separately:
-# - Vosk: https://alphacephei.com/vosk/models
-# - Silero TE: included with silero package or convert manually

@@ -57,9 +57,13 @@ htmlcov/
 logs/
 
 # Models (large files - download separately)
+# Vosk models
 voicetype/models/vosk-model-*/
-voicetype/models/silero-te/*.pt
-voicetype/models/silero-te/*.pkl
+# RUPunct ONNX models
+voicetype/models/rupunct-*/
+# Silero models (legacy PyTorch)
+voicetype/models/silero-te/
+# Keep .gitkeep for instructions
 !voicetype/models/.gitkeep
 
 # User data
@@ -74,7 +78,6 @@ voicetype/dist/
 
 # Build logs
 build_log.txt
-*.log
 
 # Temporary files
 *.tmp
@@ -83,7 +86,7 @@ build_log.txt
 .DS_Store
 Thumbs.db
 
-# Test files
+# Test files (outside tests folder)
 test_*.py
 !voicetype/tests/test_*.py
 
@@ -92,10 +95,6 @@ test_*.py
 
 # Claude Code artifacts
 .claude/
-Artifacts/
 
 # Windows null device artifact
 nul
-/build
-/voicetype/build
-/voicetype/models

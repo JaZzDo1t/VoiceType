@@ -21,7 +21,7 @@ class SimpleGraph(QWidget):
         super().__init__(parent)
         self._color = QColor(color)
         self._data = []
-        self._max_points = 60  # 60 точек (1 час при интервале 1 минута)
+        self._max_points = 720  # 720 точек (2 часа при интервале 10 секунд)
         self._max_value = 100.0
 
         self.setMinimumHeight(100)
@@ -85,8 +85,8 @@ class SimpleGraph(QWidget):
 
         # Подписи X-оси (время)
         painter.setPen(QColor("#6B7280"))
-        painter.drawText(left_margin, rect.height() - 3, "60м")
-        painter.drawText(rect.width() - right_margin - 15, rect.height() - 3, "0м")
+        painter.drawText(left_margin, rect.height() - 3, "2ч")
+        painter.drawText(rect.width() - right_margin - 20, rect.height() - 3, "сейчас")
 
         # График
         path = QPainterPath()
@@ -124,7 +124,7 @@ class SimpleGraph(QWidget):
 class TabStats(QWidget):
     """
     Вкладка 'Статистика'.
-    Графики CPU/RAM за 24 часа.
+    Графики CPU/RAM за 2 часа.
     """
 
     def __init__(self, parent=None):
@@ -189,14 +189,14 @@ class TabStats(QWidget):
         layout.addWidget(current_group)
 
         # График CPU
-        cpu_graph_group = QGroupBox("ИСТОРИЯ CPU (24 часа)")
+        cpu_graph_group = QGroupBox("ИСТОРИЯ CPU (2 часа)")
         cpu_graph_layout = QVBoxLayout(cpu_graph_group)
         self._cpu_graph = SimpleGraph(color="#3B82F6")
         cpu_graph_layout.addWidget(self._cpu_graph)
         layout.addWidget(cpu_graph_group)
 
         # График RAM
-        ram_graph_group = QGroupBox("ИСТОРИЯ RAM (24 часа)")
+        ram_graph_group = QGroupBox("ИСТОРИЯ RAM (2 часа)")
         ram_graph_layout = QVBoxLayout(ram_graph_group)
         self._ram_graph = SimpleGraph(color="#22C55E")
         ram_graph_layout.addWidget(self._ram_graph)

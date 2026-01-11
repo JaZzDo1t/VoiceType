@@ -4,7 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VoiceType is a Windows desktop application for global voice-to-text input. It runs entirely locally without sending data to the cloud. The application uses Vosk for speech recognition and Silero TE for automatic punctuation.
+VoiceType is a Windows desktop application for global voice-to-text input. It runs entirely locally without sending data to the cloud.
+
+**Speech Recognition Engines:**
+- **Vosk** - streaming recognition, real-time text output
+- **Whisper** (faster-whisper) - high quality with VAD-based segmentation
+
+**Key Features:**
+- No PyTorch dependency (~0.7 GB venv instead of ~2.5 GB)
+- ONNX-based VAD (Silero) and punctuation (RUPunct)
+- Auto-unload models after inactivity
+
+## Quick Start (New PC Deployment)
+
+```bash
+# 1. Clone repository
+git clone <repository-url>
+cd VoiceType/voicetype
+
+# 2. Create virtual environment
+python -m venv venv
+venv\Scripts\activate
+
+# 3. Install dependencies (~0.7 GB)
+pip install -r requirements.txt
+
+# 4. Download models to models/ folder:
+#    - Vosk: https://alphacephei.com/vosk/models
+#      -> vosk-model-small-ru-0.22/ (~50 MB)
+#    - RUPunct: https://huggingface.co/averkij/rupunct-onnx
+#      -> rupunct-onnx/ (~680 MB)
+
+# 5. Run (Whisper + Silero VAD download automatically on first use)
+python run.py
+```
 
 ## Build and Run Commands
 
@@ -20,9 +53,9 @@ pip install -r requirements-dev.txt  # for development
 # Run the application
 python run.py
 
-# Build standalone exe (~450 MB with PyTorch)
+# Build standalone exe (~200 MB without PyTorch)
 pip install pyinstaller
-pyinstaller build/voicetype.spec
+pyinstaller build/voicetype_onnx.spec
 # Output: dist/VoiceType/
 ```
 
@@ -68,12 +101,21 @@ mypy src/         # Type check
 
 ## Architecture
 
+### Recognition Engine
+
+**Whisper** ([whisper_recognizer.py](voicetype/src/core/whisper_recognizer.py)) - VAD-based, high quality recognition.
+
+Whisper uses:
+- **faster-whisper** (CTranslate2) - 4x faster than OpenAI Whisper, no PyTorch
+- **Silero VAD ONNX** - voice activity detection without PyTorch
+- Auto-unload after configurable timeout (default 60s)
+
 ### Threading Model
 
 The application uses three main threads:
 1. **Main Thread (Qt Event Loop)** - UI updates, tray icon, settings
 2. **Audio Thread** - PyAudio capture, writes to queue
-3. **Recognition Thread** - Vosk streaming, Silero punctuation, text output
+3. **Recognition Thread** - Vosk/Whisper processing, text output
 
 ### Thread-Safe Communication
 
@@ -92,7 +134,7 @@ self._main_window.update_text(text)  # Will crash
 Three modules use singleton patterns via `get_*` functions:
 - `get_config()` - [config.py](voicetype/src/data/config.py) - YAML configuration with dot notation (`config.get("audio.language")`)
 - `get_database()` - [database.py](voicetype/src/data/database.py) - SQLite for history (15 max) and stats (24h)
-- `get_models_manager()` - [models_manager.py](voicetype/src/data/models_manager.py) - Vosk/Silero model paths
+- `get_models_manager()` - [models_manager.py](voicetype/src/data/models_manager.py) - Vosk/Whisper/RUPunct model paths
 
 ### Module Structure
 
@@ -100,7 +142,10 @@ Three modules use singleton patterns via `get_*` functions:
 voicetype/src/
 ├── app.py              # Main controller, connects all components
 ├── main.py             # Entry point, Qt app setup
-├── core/               # Audio capture, recognition, hotkeys, output
+├── core/
+│   ├── whisper_recognizer.py # Whisper engine with VAD
+│   ├── audio_capture.py     # PyAudio capture
+│   └── output_manager.py    # Keyboard/clipboard output
 ├── ui/                 # PyQt6 interface (tabs, widgets, themes)
 ├── data/               # Config, database, model management
 └── utils/              # Logger, autostart, constants
@@ -111,40 +156,54 @@ voicetype/src/
 1. User triggers hotkey → `HotkeyManager` emits signal
 2. `VoiceTypeApp.start_recording()` creates `AudioCapture`
 3. `AudioCapture` writes audio chunks to queue in separate thread
-4. Recognition thread reads queue, feeds `Recognizer`
-5. `Recognizer` emits partial/final results via signals
-6. Final text processed through `Punctuation` → `OutputManager`
-7. `OutputManager` types into active window (pynput) or copies to clipboard
+4. Recognition thread reads queue, feeds `WhisperRecognizer`
+5. Recognizer emits partial/final results via signals
+6. `OutputManager` types into active window (pynput) or copies to clipboard
+
+## Models Location
+
+### Local Models (in `voicetype/models/`)
+
+**Vosk** - download from https://alphacephei.com/vosk/models:
+- `vosk-model-small-ru-0.22/` (~50 MB) - fast
+- `vosk-model-ru-0.42/` (~1.5 GB) - quality
+
+**RUPunct ONNX** - download from https://huggingface.co/averkij/rupunct-onnx:
+- `rupunct-onnx/` (~680 MB) - full model
+- `rupunct-medium-onnx/` (~330 MB) - compact
+
+### Auto-downloaded Models
+
+**Whisper** (faster-whisper) - downloads to `~/.cache/huggingface/hub/`:
+- tiny, base, small, medium, large-v2, large-v3
+
+**Silero VAD ONNX** - downloads to `~/.cache/silero-vad/`:
+- `silero_vad.onnx` (~2 MB)
 
 ## Configuration
 
 User config stored at `%APPDATA%/VoiceType/config.yaml`. See [config.example.yaml](voicetype/config.example.yaml) for structure.
 
 Key settings:
+- `audio.engine` - "vosk" or "whisper"
 - `audio.microphone_id` - "default" or device ID
-- `audio.language` - "ru" or "en"
-- `audio.model` - "small" (~50MB) or "large" (~1.5GB)
+- `audio.language` - "ru", "en", etc.
+- `audio.model` - "small", "medium", "large"
+- `whisper.vad_threshold` - VAD sensitivity (0.0-1.0)
+- `whisper.unload_timeout` - seconds before model unload
 - `output.mode` - "keyboard" (emulate typing) or "clipboard"
 
 ## Audio Constants
 
 Key audio settings defined in [constants.py](voicetype/src/utils/constants.py):
-- `SAMPLE_RATE = 16000` - Required by Vosk models
+- `SAMPLE_RATE = 16000` - Required by Vosk/Whisper models
 - `CHUNK_SIZE = 4000` - ~250ms of audio per chunk
 - `CHANNELS = 1` - Mono audio
-
-## Models Location
-
-Vosk models should be placed in `voicetype/models/`:
-- `vosk-model-small-ru-0.22/` - Small Russian model
-- `vosk-model-ru-0.42/` - Large Russian model
-
-Download from https://alphacephei.com/vosk/models
 
 ## UI Tabs
 
 The main window ([main_window.py](voicetype/src/ui/main_window.py)) contains tabs:
-- **Main (tab_main.py)** - Audio, recognition, output, system settings
+- **Main (tab_main.py)** - Audio, recognition engine, output, system settings
 - **Hotkeys (tab_hotkeys.py)** - Global hotkey configuration
 - **History (tab_history.py)** - Last 15 recognition sessions
 - **Stats (tab_stats.py)** - CPU/RAM graphs for 24h
