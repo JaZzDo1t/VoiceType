@@ -17,30 +17,14 @@ ROOT_DIR = Path(SPECPATH).parent
 
 block_cipher = None
 
-# Ищем путь к site-packages для vosk DLLs
-def find_vosk_dlls():
-    """Найти DLL файлы vosk в site-packages."""
-    vosk_dlls = []
-    for sp in site.getsitepackages() + [site.getusersitepackages()]:
-        vosk_dir = Path(sp) / 'vosk'
-        if vosk_dir.exists():
-            for dll in vosk_dir.glob('*.dll'):
-                vosk_dlls.append((str(dll), 'vosk'))
-            break
-    return vosk_dlls
-
 # Бинарные файлы для включения (DLLs)
-binaries = find_vosk_dlls()
+binaries = []
 
 # Собираем данные для включения
 datas = [
     # Иконки и ресурсы
     (str(ROOT_DIR / 'resources' / 'icons'), 'resources/icons'),
     (str(ROOT_DIR / 'resources' / 'sounds'), 'resources/sounds'),
-
-    # Модели Vosk (распознавание речи)
-    (str(ROOT_DIR / 'models' / 'vosk-model-small-ru-0.22'), 'models/vosk-model-small-ru-0.22'),
-    (str(ROOT_DIR / 'models' / 'vosk-model-ru-0.42'), 'models/vosk-model-ru-0.42'),
 
     # RUPunct ONNX модель (пунктуация) - НЕ silero-te!
     # Модель скачивается автоматически в ~/.cache/voicetype/rupunct_onnx/
@@ -54,9 +38,6 @@ datas += collect_data_files('transformers', include_py_files=False)
 
 # Скрытые импорты
 hiddenimports = [
-    # Vosk
-    'vosk',
-
     # ONNX Runtime (для RUPunct)
     'onnxruntime',
 
@@ -242,11 +223,6 @@ coll = COLLECT(
         'vcruntime140.dll',
         'python*.dll',
         'Qt*.dll',
-        # Vosk DLLs
-        'libvosk.dll',
-        'libgcc*.dll',
-        'libstdc++*.dll',
-        'libwinpthread*.dll',
     ],
     name='VoiceType',
 )

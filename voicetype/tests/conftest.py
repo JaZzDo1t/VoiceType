@@ -4,7 +4,6 @@ VoiceType - Pytest Configuration
 """
 import sys
 from pathlib import Path
-from typing import Optional
 import pytest
 
 # Добавляем корень проекта в путь
@@ -51,37 +50,6 @@ def is_microphone_available() -> bool:
         return False
 
 
-def find_vosk_model() -> Optional[Path]:
-    """
-    Найти установленную Vosk модель.
-
-    Returns:
-        Path к модели или None если не найдена
-    """
-    # Проверяем стандартные пути
-    possible_paths = [
-        ROOT_DIR / "models" / "vosk-model-small-ru-0.22",
-        ROOT_DIR / "models" / "vosk-model-ru-0.42",
-        ROOT_DIR / "models" / "vosk-model-small-en-us-0.15",
-        ROOT_DIR / "models" / "vosk-model-en-us-0.22",
-        ROOT_DIR.parent / "models" / "vosk-model-small-ru-0.22",
-        Path.home() / ".vosk" / "vosk-model-small-ru-0.22",
-    ]
-
-    for path in possible_paths:
-        if path.exists():
-            return path
-
-    # Ищем любую папку с "vosk-model" в имени
-    models_dir = ROOT_DIR / "models"
-    if models_dir.exists():
-        for item in models_dir.iterdir():
-            if item.is_dir() and "vosk-model" in item.name:
-                return item
-
-    return None
-
-
 # =============================================================================
 # Session-Scoped Fixtures (shared across all tests)
 # =============================================================================
@@ -94,18 +62,6 @@ def check_microphone_available():
     """
     if not is_microphone_available():
         pytest.skip("No microphone available - skipping hardware tests")
-
-
-@pytest.fixture(scope="session")
-def vosk_model_path() -> Optional[Path]:
-    """
-    Получить путь к Vosk модели.
-    Skip если модель не найдена.
-    """
-    path = find_vosk_model()
-    if path is None:
-        pytest.skip("Vosk model not found - skipping recognition tests")
-    return path
 
 
 # =============================================================================

@@ -83,14 +83,6 @@ def check_requirements():
     else:
         errors.append(f"Spec file not found: {SPEC_FILE}")
 
-    # Проверяем модели
-    models_dir = ROOT_DIR / "models"
-    vosk_model = models_dir / "vosk-model-small-ru-0.22"
-    if vosk_model.exists():
-        print(f"  Vosk model: OK")
-    else:
-        errors.append(f"Vosk model not found: {vosk_model}")
-
     # Проверяем иконку
     icon_path = ROOT_DIR / "resources" / "icons" / "app_icon.ico"
     if icon_path.exists():
