@@ -183,6 +183,125 @@ def get_process_cpu() -> float:
     return _ProcessMonitor.get_instance().get_cpu()
 
 
+class _VRAMMonitor:
+    """Синглтон для мониторинга VRAM с отслеживанием baseline."""
+    _instance = None
+
+    def __init__(self):
+        self._baseline_mb = None
+        self._total_mb = 0
+        self._available = False
+        self._init_baseline()
+
+    def _init_baseline(self):
+        """Инициализировать baseline при первом запуске."""
+        # Отложенная инициализация - не делаем ничего сразу
+        # Baseline будет установлен при первом вызове get_app_vram()
+        pass
+
+    def _do_init_baseline(self):
+        """Фактическая инициализация baseline."""
+        if self._baseline_mb is not None:
+            return  # Уже инициализировано
+        info = self._query_nvidia_smi()
+        if info["available"]:
+            self._baseline_mb = info["used_mb"]
+            self._total_mb = info["total_mb"]
+            self._available = True
+            logger.debug(f"VRAM baseline set: {self._baseline_mb:.0f} MB")
+        else:
+            self._available = False
+
+    def _query_nvidia_smi(self) -> Dict:
+        """Запросить данные от nvidia-smi."""
+        try:
+            import subprocess
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=memory.total,memory.used,memory.free',
+                 '--format=csv,noheader,nounits'],
+                capture_output=True, text=True, timeout=5,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(', ')
+                if len(parts) == 3:
+                    return {
+                        "total_mb": float(parts[0]),
+                        "used_mb": float(parts[1]),
+                        "free_mb": float(parts[2]),
+                        "available": True
+                    }
+        except FileNotFoundError:
+            logger.debug("nvidia-smi not found - no NVIDIA GPU")
+        except subprocess.TimeoutExpired:
+            logger.warning("nvidia-smi timeout")
+        except Exception as e:
+            logger.error(f"Failed to get VRAM usage: {e}")
+        return {"total_mb": 0, "used_mb": 0, "free_mb": 0, "available": False}
+
+    @classmethod
+    def get_instance(cls) -> "_VRAMMonitor":
+        if cls._instance is None:
+            cls._instance = _VRAMMonitor()
+        return cls._instance
+
+    def get_app_vram(self, lazy: bool = False) -> Dict:
+        """Получить использование VRAM приложением (разница от baseline).
+
+        Args:
+            lazy: Если True, не инициализировать baseline сразу, вернуть "неизвестно"
+        """
+        # Ленивая инициализация baseline
+        if self._baseline_mb is None:
+            if lazy:
+                # При ленивом режиме возвращаем "недоступно" без инициализации
+                return {"total_mb": 0, "used_mb": 0, "free_mb": 0, "available": False}
+            self._do_init_baseline()
+
+        if not self._available or self._baseline_mb is None:
+            return {"total_mb": 0, "used_mb": 0, "free_mb": 0, "available": False}
+
+        info = self._query_nvidia_smi()
+        if not info["available"]:
+            return {"total_mb": 0, "used_mb": 0, "free_mb": 0, "available": False}
+
+        # Использование приложением = текущее - baseline
+        app_used = max(0, info["used_mb"] - self._baseline_mb)
+        return {
+            "total_mb": self._total_mb,
+            "used_mb": app_used,
+            "free_mb": info["free_mb"],
+            "available": True
+        }
+
+    def reset_baseline(self):
+        """Сбросить baseline (вызывать после выгрузки моделей)."""
+        self._baseline_mb = None
+        self._do_init_baseline()
+
+
+def get_vram_usage(lazy: bool = False) -> Dict:
+    """
+    Получить информацию об использовании видеопамяти приложением.
+
+    Args:
+        lazy: Если True, не инициализировать baseline сразу
+
+    Returns:
+        {"total_mb": float, "used_mb": float, "free_mb": float, "available": bool}
+        used_mb - только использование этим приложением (относительно baseline при старте)
+    """
+    return _VRAMMonitor.get_instance().get_app_vram(lazy=lazy)
+
+
+def reset_vram_baseline():
+    """Сбросить baseline VRAM (вызывать после выгрузки моделей)."""
+    _VRAMMonitor.get_instance().reset_baseline()
+
+
 def get_system_info() -> Dict:
     """
     Получить общую информацию о системе.

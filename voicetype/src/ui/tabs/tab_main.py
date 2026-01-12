@@ -33,7 +33,7 @@ class TabMain(QWidget):
     output_mode_changed = pyqtSignal(str)     # keyboard/clipboard
     theme_changed = pyqtSignal(str)           # dark/light
     autostart_changed = pyqtSignal(bool)      # enabled
-    whisper_model_changed = pyqtSignal(str)   # base/small/medium
+    whisper_model_changed = pyqtSignal(str)   # base/small
     vad_threshold_changed = pyqtSignal(float) # 0.0-1.0
     noise_floor_changed = pyqtSignal(int)     # 200-2000
 
@@ -59,7 +59,6 @@ class TabMain(QWidget):
         self._whisper_model_combo = QComboBox()
         self._whisper_model_combo.addItem("base (~150MB)", "base")
         self._whisper_model_combo.addItem("small (~500MB) - рекомендуемая", "small")
-        self._whisper_model_combo.addItem("medium (~1.5GB)", "medium")
         self._whisper_model_combo.setMinimumWidth(280)
         whisper_model_layout.addWidget(self._whisper_model_combo)
         whisper_model_layout.addStretch()
@@ -203,8 +202,8 @@ class TabMain(QWidget):
 
         # Whisper model
         whisper_model = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-        # Проверяем, что модель в допустимых пределах (base, small, medium)
-        if whisper_model not in ["base", "small", "medium"]:
+        # Проверяем, что модель в допустимых пределах (base, small)
+        if whisper_model not in ["base", "small"]:
             whisper_model = "small"  # default
         index = self._whisper_model_combo.findData(whisper_model)
         if index >= 0:

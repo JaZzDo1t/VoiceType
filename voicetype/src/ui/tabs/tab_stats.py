@@ -11,7 +11,7 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QFont
 from loguru import logger
 
 from src.data.database import get_database
-from src.utils.system_info import get_process_cpu, get_process_memory, get_memory_usage
+from src.utils.system_info import get_process_cpu, get_process_memory, get_memory_usage, get_vram_usage
 
 
 class SimpleGraph(QWidget):
@@ -186,6 +186,28 @@ class TabStats(QWidget):
 
         current_layout.addLayout(ram_layout)
 
+        # VRAM (GPU)
+        vram_layout = QVBoxLayout()
+        vram_label = QLabel("VRAM")
+        vram_label.setObjectName("secondaryLabel")
+        vram_layout.addWidget(vram_label)
+
+        self._vram_value = QLabel("— МБ")
+        self._vram_value.setStyleSheet("font-size: 24px; font-weight: bold;")
+        vram_layout.addWidget(self._vram_value)
+
+        self._vram_bar = QProgressBar()
+        # Ленивая инициализация - не вызываем nvidia-smi при старте
+        vram_info = get_vram_usage(lazy=True)
+        self._vram_available = vram_info["available"]
+        self._vram_total_mb = int(vram_info.get("total_mb", 8192))
+        self._vram_bar.setMaximum(self._vram_total_mb)
+        self._vram_bar.setValue(0)
+        self._vram_bar.setTextVisible(False)
+        vram_layout.addWidget(self._vram_bar)
+
+        current_layout.addLayout(vram_layout)
+
         layout.addWidget(current_group)
 
         # График CPU
@@ -201,6 +223,13 @@ class TabStats(QWidget):
         self._ram_graph = SimpleGraph(color="#22C55E")
         ram_graph_layout.addWidget(self._ram_graph)
         layout.addWidget(ram_graph_group)
+
+        # График VRAM
+        vram_graph_group = QGroupBox("ИСТОРИЯ VRAM (2 часа)")
+        vram_graph_layout = QVBoxLayout(vram_graph_group)
+        self._vram_graph = SimpleGraph(color="#F59E0B")  # Оранжевый для GPU
+        vram_graph_layout.addWidget(self._vram_graph)
+        layout.addWidget(vram_graph_group)
 
         # Статистика распознавания
         recog_group = QGroupBox("РАСПОЗНАВАНИЕ")
@@ -237,6 +266,19 @@ class TabStats(QWidget):
         self._ram_value.setText(f"{ram:.0f} / {self._system_ram_mb:.0f} МБ")
         self._ram_bar.setValue(int(min(ram, self._system_ram_mb)))
 
+        # Обновляем VRAM (здесь можно инициализировать baseline)
+        vram_info = get_vram_usage()
+        if vram_info.get("available"):
+            self._vram_available = True
+            self._vram_total_mb = int(vram_info.get("total_mb", 8192))
+            self._vram_bar.setMaximum(self._vram_total_mb)
+            vram_used = vram_info.get("used_mb", 0)
+            self._vram_value.setText(f"{vram_used:.0f} / {self._vram_total_mb:.0f} МБ")
+            self._vram_bar.setValue(int(min(vram_used, self._vram_total_mb)))
+        else:
+            self._vram_value.setText("Нет GPU")
+            self._vram_bar.setValue(0)
+
     def _load_stats(self):
         """Загрузить статистику из БД."""
         # Получаем статистику за 24 часа
@@ -245,12 +287,15 @@ class TabStats(QWidget):
         if stats:
             cpu_data = [s["cpu_percent"] for s in stats]
             ram_data = [s["ram_mb"] for s in stats]
+            vram_data = [s.get("vram_mb", 0) for s in stats]
 
             self._cpu_graph.set_data(cpu_data)
             self._ram_graph.set_data(ram_data)
+            self._vram_graph.set_data(vram_data)
         else:
             self._cpu_graph.clear()
             self._ram_graph.clear()
+            self._vram_graph.clear()
 
         # Время распознавания
         total_seconds = self._db.get_today_recognition_time()
@@ -265,17 +310,21 @@ class TabStats(QWidget):
         """Обновить вкладку."""
         self._load_stats()
 
-    def update_graphs(self, cpu: float, ram: float):
+    def update_graphs(self, cpu: float, ram: float, vram: float = 0):
         """Обновить графики новыми данными (вызывается по сигналу из app)."""
         self._cpu_graph.add_point(cpu)
         self._ram_graph.add_point(ram)
+        self._vram_graph.add_point(vram)
         # Обновляем и текущие значения
         self._cpu_value.setText(f"{cpu:.1f}%")
         self._cpu_bar.setValue(int(min(cpu, 100)))
         self._ram_value.setText(f"{ram:.0f} / {self._system_ram_mb:.0f} МБ")
         self._ram_bar.setValue(int(min(ram, self._system_ram_mb)))
+        if self._vram_available:
+            self._vram_value.setText(f"{vram:.0f} / {self._vram_total_mb:.0f} МБ")
+            self._vram_bar.setValue(int(min(vram, self._vram_total_mb)))
 
-    def record_stats(self, cpu: float, ram: float):
+    def record_stats(self, cpu: float, ram: float, vram: float = 0):
         """Записать статистику в БД (устаревший метод, используйте update_graphs)."""
-        self._db.add_stats_entry(cpu, ram)
-        self.update_graphs(cpu, ram)
+        self._db.add_stats_entry(cpu, ram, vram)
+        self.update_graphs(cpu, ram, vram)

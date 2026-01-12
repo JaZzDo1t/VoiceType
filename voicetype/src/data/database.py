@@ -56,9 +56,16 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp DATETIME NOT NULL,
                     cpu_percent REAL NOT NULL,
-                    ram_mb REAL NOT NULL
+                    ram_mb REAL NOT NULL,
+                    vram_mb REAL DEFAULT 0
                 )
             """)
+
+            # Миграция: добавить колонку vram_mb если её нет
+            cursor.execute("PRAGMA table_info(stats)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "vram_mb" not in columns:
+                cursor.execute("ALTER TABLE stats ADD COLUMN vram_mb REAL DEFAULT 0")
 
             # Индексы для быстрого поиска
             cursor.execute("""
@@ -199,7 +206,7 @@ class Database:
 
     # ==================== Статистика ====================
 
-    def add_stats_entry(self, cpu_percent: float, ram_mb: float) -> None:
+    def add_stats_entry(self, cpu_percent: float, ram_mb: float, vram_mb: float = 0) -> None:
         """Добавить запись статистики."""
         self._ensure_initialized()
 
@@ -208,9 +215,9 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO stats (timestamp, cpu_percent, ram_mb)
-                VALUES (?, ?, ?)
-            """, (timestamp, cpu_percent, ram_mb))
+                INSERT INTO stats (timestamp, cpu_percent, ram_mb, vram_mb)
+                VALUES (?, ?, ?, ?)
+            """, (timestamp, cpu_percent, ram_mb, vram_mb))
             conn.commit()
 
     def get_stats_24h(self) -> List[Dict]:
@@ -227,7 +234,7 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, timestamp, cpu_percent, ram_mb
+                SELECT id, timestamp, cpu_percent, ram_mb, COALESCE(vram_mb, 0) as vram_mb
                 FROM stats
                 WHERE timestamp >= ?
                 ORDER BY timestamp ASC

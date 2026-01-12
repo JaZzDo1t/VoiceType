@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
         "engine": "whisper",
         "whisper": {
             "model": "small",
+            "device": "cuda",
             "vad_threshold": 0.7
         }
     },

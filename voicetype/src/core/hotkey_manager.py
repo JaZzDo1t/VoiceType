@@ -11,7 +11,8 @@ from loguru import logger
 from src.utils.constants import DEFAULT_HOTKEY_TOGGLE
 
 # Debounce interval in seconds
-HOTKEY_DEBOUNCE_INTERVAL = 0.3  # 300ms
+# Increased to 500ms to prevent accidental double-triggers during key release
+HOTKEY_DEBOUNCE_INTERVAL = 0.5  # 500ms
 
 
 class HotkeyManager:
@@ -306,14 +307,16 @@ class HotkeyManager:
         if key_str:
             with self._lock:
                 self._pressed_keys.discard(key_str)
-                # Reset triggered hotkeys that used this key so they can fire again
+                # Reset triggered hotkeys only when ALL keys of the combo are released
+                # This prevents re-triggering when user releases keys one by one
                 hotkeys_to_reset = set()
                 for hotkey_str in self._triggered_hotkeys:
                     modifiers, regular_keys = self.parse_hotkey(hotkey_str)
-                    # Объединяем модификаторы и обычные клавиши
                     all_keys = modifiers | regular_keys
-                    if key_str in all_keys:
+                    # Only reset if NO keys from the combo are still pressed
+                    if not (all_keys & self._pressed_keys):
                         hotkeys_to_reset.add(hotkey_str)
+                        logger.debug(f"Hotkey {hotkey_str} reset (all keys released)")
                 self._triggered_hotkeys -= hotkeys_to_reset
 
     def _check_hotkeys(self) -> None:
@@ -337,11 +340,12 @@ class HotkeyManager:
                 if all_keys <= self._pressed_keys:
                     # Check debounce - ensure 300ms passed since last trigger
                     last_time = self._last_trigger_time.get(hotkey_str, 0)
-                    if current_time - last_time < HOTKEY_DEBOUNCE_INTERVAL:
-                        logger.debug(f"Hotkey {hotkey_str} debounced (too soon)")
+                    time_since_last = current_time - last_time
+                    if time_since_last < HOTKEY_DEBOUNCE_INTERVAL:
+                        logger.debug(f"Hotkey {hotkey_str} debounced (too soon: {time_since_last:.3f}s < {HOTKEY_DEBOUNCE_INTERVAL}s)")
                         continue
 
-                    logger.debug(f"Hotkey triggered: {hotkey_str}")
+                    logger.info(f"Hotkey triggered: {hotkey_str}, pressed_keys={self._pressed_keys}, time_since_last={time_since_last:.3f}s")
                     # Mark as triggered and update last trigger time
                     self._triggered_hotkeys.add(hotkey_str)
                     self._last_trigger_time[hotkey_str] = current_time

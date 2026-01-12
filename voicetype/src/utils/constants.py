@@ -27,8 +27,8 @@ SUPPORTED_LANGUAGES = ["ru", "en"]
 # Recognition engine (only Whisper)
 ENGINE_WHISPER = "whisper"
 
-# Whisper settings (only base, small, medium)
-WHISPER_MODEL_SIZES = ["base", "small", "medium"]
+# Whisper settings (only base, small)
+WHISPER_MODEL_SIZES = ["base", "small"]
 WHISPER_DEFAULT_MODEL = "small"
 WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
 WHISPER_DEFAULT_MIN_SILENCE_MS = 300

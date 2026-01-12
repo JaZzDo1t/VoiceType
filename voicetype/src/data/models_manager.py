@@ -17,11 +17,10 @@ class ModelsManager:
     """
 
     # Информация о моделях Whisper (размер в MB)
-    # Только base, small, medium - убраны tiny и large-v3
+    # Только base, small - убраны tiny, medium и large-v3
     WHISPER_MODEL_INFO = {
         "base": {"size_mb": 145, "params": "74M", "quality": "medium"},
         "small": {"size_mb": 488, "params": "244M", "quality": "good"},
-        "medium": {"size_mb": 1500, "params": "769M", "quality": "high"},
     }
 
     def __init__(self):
@@ -49,7 +48,7 @@ class ModelsManager:
         Проверить, скачана ли модель Whisper.
 
         Args:
-            model_size: Размер модели (base, small, medium)
+            model_size: Размер модели (base, small)
 
         Returns:
             True если модель уже скачана в кеш

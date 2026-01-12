@@ -27,7 +27,7 @@ class WhisperRecognizer:
     Поддерживает автоматическую выгрузку модели после периода неактивности.
 
     Пример использования:
-        recognizer = WhisperRecognizer(model_size="small", device="cpu")
+        recognizer = WhisperRecognizer(model_size="small", device="cuda")
         recognizer.on_final_result = lambda text: print(f"Результат: {text}")
         recognizer.load_model()
 
@@ -38,16 +38,16 @@ class WhisperRecognizer:
         text = recognizer.get_final_result()
     """
 
-    # Поддерживаемые размеры моделей Whisper (только base, small, medium)
-    SUPPORTED_MODEL_SIZES = ["base", "small", "medium"]
+    # Поддерживаемые размеры моделей Whisper (только base, small)
+    SUPPORTED_MODEL_SIZES = ["base", "small"]
 
-    # Поддерживаемые устройства (только CPU)
-    SUPPORTED_DEVICES = ["cpu"]
+    # Поддерживаемые устройства (cuda предпочтителен, cpu как fallback)
+    SUPPORTED_DEVICES = ["cuda", "cpu"]
 
     def __init__(
         self,
         model_size: str = "small",
-        device: str = "cpu",
+        device: str = "cuda",
         language: str = "ru",
         sample_rate: int = SAMPLE_RATE,
         vad_threshold: float = 0.5,
@@ -58,8 +58,8 @@ class WhisperRecognizer:
         Инициализация распознавателя Whisper.
 
         Args:
-            model_size: Размер модели Whisper (base, small, medium)
-            device: Устройство для вычислений (только cpu)
+            model_size: Размер модели Whisper (base, small)
+            device: Устройство для вычислений (cuda)
             language: Язык распознавания (ru, en и т.д.)
             sample_rate: Частота дискретизации аудио (по умолчанию 16000)
             vad_threshold: Порог срабатывания VAD (0.0-1.0, выше = менее чувствительный)
@@ -107,6 +107,7 @@ class WhisperRecognizer:
         self._last_activity_time: float = 0
         self._unload_timer: Optional[threading.Timer] = None
         self._unload_lock = threading.Lock()
+        self._is_processing = False  # Флаг активной обработки (блокирует auto-unload)
 
         # Callbacks
         self.on_partial_result: Optional[Callable[[str], None]] = None
@@ -143,12 +144,27 @@ class WhisperRecognizer:
             if self.on_loading_progress:
                 self.on_loading_progress(20)
 
-            # CPU-only: используем int8 для производительности
-            self._model = WhisperModel(
-                self.model_size,
-                device="cpu",
-                compute_type="int8",
-            )
+            # GPU: float16, CPU: int8
+            compute_type = "float16" if self.device == "cuda" else "int8"
+
+            try:
+                self._model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=compute_type,
+                )
+            except Exception as cuda_error:
+                if self.device == "cuda":
+                    logger.warning(f"CUDA загрузка не удалась: {cuda_error}, пробуем CPU...")
+                    self.device = "cpu"
+                    compute_type = "int8"
+                    self._model = WhisperModel(
+                        self.model_size,
+                        device=self.device,
+                        compute_type=compute_type,
+                    )
+                else:
+                    raise
 
             if self.on_loading_progress:
                 self.on_loading_progress(60)
@@ -241,8 +257,8 @@ class WhisperRecognizer:
                 self._unload_timer.cancel()
                 self._unload_timer = None
 
-            # Создаём новый таймер
-            if self._is_loaded and self.unload_timeout_sec > 0:
+            # Создаём новый таймер только если не в процессе обработки
+            if self._is_loaded and self.unload_timeout_sec > 0 and not self._is_processing:
                 self._unload_timer = threading.Timer(
                     self.unload_timeout_sec,
                     self._auto_unload
@@ -250,10 +266,44 @@ class WhisperRecognizer:
                 self._unload_timer.daemon = True
                 self._unload_timer.start()
 
+    def cancel_unload_timer(self) -> None:
+        """Отменить таймер автоматической выгрузки (вызывать перед загрузкой/записью)."""
+        with self._unload_lock:
+            if self._unload_timer is not None:
+                self._unload_timer.cancel()
+                self._unload_timer = None
+                logger.debug("Таймер выгрузки отменён")
+
+    def set_processing(self, is_processing: bool) -> None:
+        """
+        Установить флаг активной обработки.
+
+        Пока флаг True, auto-unload не будет срабатывать.
+        Вызывать перед началом и после завершения записи.
+        """
+        self._is_processing = is_processing
+        if is_processing:
+            # Отменяем таймер при начале обработки
+            self.cancel_unload_timer()
+            logger.debug("Режим обработки включён, таймер выгрузки отменён")
+        else:
+            # Перезапускаем таймер после завершения обработки
+            self._update_activity_time()
+            logger.debug("Режим обработки выключен, таймер выгрузки перезапущен")
+
     def _auto_unload(self) -> None:
         """Автоматическая выгрузка модели после периода неактивности."""
-        elapsed = time.time() - self._last_activity_time
-        if elapsed >= self.unload_timeout_sec and self._is_loaded:
+        # Проверяем с lock для thread-safety
+        with self._unload_lock:
+            # Не выгружаем если идёт обработка
+            if self._is_processing:
+                logger.debug("Auto-unload пропущен: идёт обработка")
+                return
+
+            elapsed = time.time() - self._last_activity_time
+            should_unload = elapsed >= self.unload_timeout_sec and self._is_loaded
+
+        if should_unload:
             logger.info(
                 f"Автоматическая выгрузка модели после {elapsed:.0f}с неактивности"
             )
@@ -272,8 +322,13 @@ class WhisperRecognizer:
         Returns:
             None (результат возвращается через callback on_final_result)
         """
-        # Автозагрузка модели при необходимости
-        if not self._is_loaded:
+        # Проверка загрузки с lock для thread-safety
+        with self._lock:
+            is_loaded = self._is_loaded
+            model_exists = self._model is not None
+
+        # Автозагрузка модели при необходимости (вне lock, т.к. load_model долгий)
+        if not is_loaded or not model_exists:
             logger.info("Модель не загружена, выполняется автозагрузка...")
             if not self.load_model():
                 return None
@@ -537,12 +592,22 @@ class WhisperRecognizer:
 
     def unload(self) -> None:
         """Выгрузить модели для освобождения памяти."""
+        # Сначала отменяем таймер (отдельный lock, без вложенности)
+        with self._unload_lock:
+            if self._unload_timer is not None:
+                self._unload_timer.cancel()
+                self._unload_timer = None
+
+        # Теперь основная выгрузка
         with self._lock:
-            # Отменяем таймер
-            with self._unload_lock:
-                if self._unload_timer is not None:
-                    self._unload_timer.cancel()
-                    self._unload_timer = None
+            # Проверяем что не в процессе обработки
+            if self._is_processing:
+                logger.warning("unload() вызван во время обработки, пропускаем")
+                return
+
+            if not self._is_loaded:
+                logger.debug("unload(): модели уже выгружены")
+                return
 
             # Очищаем модели
             self._model = None
