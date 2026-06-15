@@ -52,6 +52,7 @@ class VoiceTypeApp(QObject):
     _stats_collected_signal = pyqtSignal(float, float, float)  # (cpu, ram, vram) для обновления графиков
     _whisper_status_signal = pyqtSignal(bool, str)  # (loaded, model_name) для обновления статуса Whisper
     _vad_status_signal = pyqtSignal(bool)  # (loaded) для обновления статуса VAD
+    _error_signal = pyqtSignal(str, str)  # (title, detail) — ошибка распознавания во время работы
 
     def __init__(self):
         super().__init__()
@@ -101,9 +102,10 @@ class VoiceTypeApp(QObject):
             # Создаём UI
             self._create_ui()
 
-            # Показываем окно загрузки СРАЗУ при старте
+            # Показываем окно загрузки при старте (если не свёрнуто в трей)
             self._main_window.set_loading(True)
-            self._main_window.show()
+            if not self._config.get("system.start_minimized", False):
+                self._main_window.show()
 
             # Показываем статус загрузки в трее
             self._tray_icon.set_state(TRAY_STATE_LOADING)
@@ -160,6 +162,7 @@ class VoiceTypeApp(QObject):
         self._hotkey_triggered_signal.connect(self._on_hotkey_triggered)
         self._whisper_status_signal.connect(self._on_whisper_status_changed)
         self._vad_status_signal.connect(self._on_vad_status_changed)
+        self._error_signal.connect(self._on_recognition_error)
 
     def _connect_ui_signals(self):
         """Подключить сигналы UI."""
@@ -255,6 +258,9 @@ class VoiceTypeApp(QObject):
         self._recognizer.on_model_loaded = lambda model_name: self._on_recognizer_model_loaded(model_name)
         self._recognizer.on_model_unloaded = lambda: self._on_recognizer_model_unloaded()
 
+        # Ошибки во время работы (вызывается из recognition-потока) → UI через сигнал
+        self._recognizer.on_error = lambda e: self._error_signal.emit("Ошибка распознавания", str(e))
+
         # Connect loading progress callback
         self._recognizer.on_loading_progress = lambda progress: self._main_window.set_loading_progress(progress, 100)
 
@@ -284,6 +290,20 @@ class VoiceTypeApp(QObject):
 
             model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
             QCoreApplication.processEvents()
+
+            # Проактивная диагностика окружения перед загрузкой
+            from src.core.diagnostics import diagnose
+            device = self._config.get("audio.whisper.device", "cuda")
+            issues = diagnose(model_name, device)
+            if issues:
+                title = issues[0].title
+                detail = "\n".join(i.detail for i in issues)
+                logger.error(f"Диагностика выявила проблемы: {detail}")
+                self._main_window.show_loading_error(title, detail)
+                self._tray_icon.show_notification("VoiceType - Ошибка", title)
+                self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
+                self._models_loaded = False
+                return
 
             # Загружаем модели
             logger.info(f"Загрузка моделей при старте...")
@@ -461,6 +481,19 @@ class VoiceTypeApp(QObject):
         try:
             model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
             logger.info(f"Перезагрузка моделей: {model_name}")
+
+            from src.core.diagnostics import diagnose
+            device = self._config.get("audio.whisper.device", "cuda")
+            issues = diagnose(model_name, device)
+            if issues:
+                title = issues[0].title
+                detail = "\n".join(i.detail for i in issues)
+                logger.error(f"Диагностика выявила проблемы при reload: {detail}")
+                self._main_window.show_loading_error(title, detail)
+                self._tray_icon.show_notification("VoiceType - Ошибка", title)
+                self._tray_icon.set_state(TRAY_STATE_ERROR)
+                self._recognizer.set_processing(False)
+                return
 
             # ВАЖНО: Сначала блокируем auto-unload, потом отменяем таймер
             # Это предотвращает race condition если таймер уже сработал
@@ -668,7 +701,13 @@ class VoiceTypeApp(QObject):
         elif state == TRAY_STATE_ERROR:
             logger.error("Models loading failed (signal)")
             self._models_loaded = False
-            self._main_window.show_loading_error("Ошибка загрузки модели")
+            detail = ""
+            if self._recognizer is not None:
+                detail = getattr(self._recognizer, "_last_load_error", "") or ""
+            self._main_window.show_loading_error(
+                "Ошибка загрузки модели",
+                detail or "Подробности в логах.",
+            )
             self._main_window.tab_test.set_models_ready(False)
             self._main_window.tab_main.set_whisper_status(False)
             self._main_window.tab_main.set_vad_status(False)
@@ -692,6 +731,11 @@ class VoiceTypeApp(QObject):
         """Обработчик изменения статуса Whisper (в UI потоке)."""
         self._main_window.tab_main.set_whisper_status(loaded, model_name)
         logger.debug(f"Whisper status updated: loaded={loaded}, model={model_name}")
+
+    def _on_recognition_error(self, title: str, detail: str):
+        """Обработчик ошибки распознавания во время работы (в UI потоке)."""
+        logger.error(f"{title}: {detail}")
+        self._tray_icon.show_notification(f"VoiceType - {title}", detail)
 
     def _on_vad_status_changed(self, loaded: bool):
         """Обработчик изменения статуса VAD (в UI потоке)."""
