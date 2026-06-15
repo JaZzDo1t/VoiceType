@@ -495,7 +495,8 @@ class VoiceTypeApp(QObject):
 
             device = self._config.get("audio.whisper.device", "cuda")
             if not self._check_environment(model_name, device):
-                self._recognizer.set_processing(False)
+                if self._recognizer is not None:
+                    self._recognizer.set_processing(False)
                 return
 
             # ВАЖНО: Сначала блокируем auto-unload, потом отменяем таймер
