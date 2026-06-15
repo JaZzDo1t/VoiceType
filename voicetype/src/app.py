@@ -259,7 +259,8 @@ class VoiceTypeApp(QObject):
         self._recognizer.on_model_unloaded = lambda: self._on_recognizer_model_unloaded()
 
         # Ошибки во время работы (вызывается из recognition-потока) → UI через сигнал
-        self._recognizer.on_error = lambda e: self._error_signal.emit("Ошибка распознавания", str(e))
+        self._recognizer.on_error = lambda e: self._error_signal.emit(
+            "Ошибка распознавания", f"{type(e).__name__}: {e}")
 
         # Connect loading progress callback
         self._recognizer.on_loading_progress = lambda progress: self._main_window.set_loading_progress(progress, 100)
@@ -273,6 +274,24 @@ class VoiceTypeApp(QObject):
         # event loop запустится. Загрузка будет в главном потоке, что избегает
         # crash от CTranslate2 + threading + Qt event loop.
         QTimer.singleShot(50, self._do_load_models)
+
+    def _check_environment(self, model_name: str, device: str) -> bool:
+        """Проверить окружение перед загрузкой. True = всё ок; иначе показать диагноз и False.
+
+        Вызывается из главного потока (_do_load_models / _do_reload_models_then_start),
+        поэтому UI-методы зовём напрямую.
+        """
+        from src.core.diagnostics import diagnose
+        issues = diagnose(model_name, device)
+        if not issues:
+            return True
+        title = issues[0].title
+        detail = "\n".join(i.detail for i in issues)
+        logger.error(f"Диагностика выявила проблемы: {detail}")
+        self._main_window.show_loading_error(title, detail)
+        self._tray_icon.show_notification("VoiceType - Ошибка", title)
+        self._tray_icon.set_state(TRAY_STATE_ERROR)
+        return False
 
     def _do_load_models(self):
         """Фактическая загрузка моделей (в главном потоке)."""
@@ -292,16 +311,8 @@ class VoiceTypeApp(QObject):
             QCoreApplication.processEvents()
 
             # Проактивная диагностика окружения перед загрузкой
-            from src.core.diagnostics import diagnose
             device = self._config.get("audio.whisper.device", "cuda")
-            issues = diagnose(model_name, device)
-            if issues:
-                title = issues[0].title
-                detail = "\n".join(i.detail for i in issues)
-                logger.error(f"Диагностика выявила проблемы: {detail}")
-                self._main_window.show_loading_error(title, detail)
-                self._tray_icon.show_notification("VoiceType - Ошибка", title)
-                self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
+            if not self._check_environment(model_name, device):
                 self._models_loaded = False
                 return
 
@@ -482,16 +493,8 @@ class VoiceTypeApp(QObject):
             model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
             logger.info(f"Перезагрузка моделей: {model_name}")
 
-            from src.core.diagnostics import diagnose
             device = self._config.get("audio.whisper.device", "cuda")
-            issues = diagnose(model_name, device)
-            if issues:
-                title = issues[0].title
-                detail = "\n".join(i.detail for i in issues)
-                logger.error(f"Диагностика выявила проблемы при reload: {detail}")
-                self._main_window.show_loading_error(title, detail)
-                self._tray_icon.show_notification("VoiceType - Ошибка", title)
-                self._tray_icon.set_state(TRAY_STATE_ERROR)
+            if not self._check_environment(model_name, device):
                 self._recognizer.set_processing(False)
                 return
 
@@ -735,7 +738,7 @@ class VoiceTypeApp(QObject):
     def _on_recognition_error(self, title: str, detail: str):
         """Обработчик ошибки распознавания во время работы (в UI потоке)."""
         logger.error(f"{title}: {detail}")
-        self._tray_icon.show_notification(f"VoiceType - {title}", detail)
+        self._tray_icon.show_notification(f"VoiceType - {title}", detail[:200])
 
     def _on_vad_status_changed(self, loaded: bool):
         """Обработчик изменения статуса VAD (в UI потоке)."""
