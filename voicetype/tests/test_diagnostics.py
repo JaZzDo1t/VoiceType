@@ -1,7 +1,7 @@
 """Тесты диагностики окружения."""
 from pathlib import Path
 
-from src.core.diagnostics import check_model, IssueCode
+from src.core.diagnostics import check_model, check_cuda, diagnose, IssueCode
 
 
 def _make_model(tmp_path: Path, size: int, *, incomplete: bool = False) -> Path:
@@ -31,6 +31,17 @@ def test_check_model_missing(tmp_path):
     assert issues[0].code == IssueCode.MODEL_MISSING
 
 
+def test_check_model_missing_snapshots_has_only_files(tmp_path):
+    cache_dir = tmp_path / "hub"
+    model_dir = cache_dir / "models--Systran--faster-whisper-medium"
+    snapshots = model_dir / "snapshots"
+    snapshots.mkdir(parents=True)
+    (snapshots / "stray_file.txt").write_text("garbage")
+    issues = check_model("medium", cache_dir, min_size=1000)
+    assert len(issues) == 1
+    assert issues[0].code == IssueCode.MODEL_MISSING
+
+
 def test_check_model_corrupt_small(tmp_path):
     cache_dir = _make_model(tmp_path, size=100)  # меньше порога
     issues = check_model("medium", cache_dir, min_size=1000)
@@ -43,9 +54,6 @@ def test_check_model_corrupt_incomplete(tmp_path):
     issues = check_model("medium", cache_dir, min_size=1000)
     assert len(issues) == 1
     assert issues[0].code == IssueCode.MODEL_CORRUPT
-
-
-from src.core.diagnostics import check_cuda
 
 
 def _make_nvidia(tmp_path: Path, dlls: list) -> Path:
@@ -86,9 +94,6 @@ def test_check_cuda_both_missing(tmp_path):
     nvidia_base.mkdir()
     issues = check_cuda(nvidia_base)
     assert len(issues) == 2
-
-
-from src.core.diagnostics import diagnose
 
 
 def test_diagnose_ok_cuda(tmp_path):

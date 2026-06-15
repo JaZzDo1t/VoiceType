@@ -40,7 +40,7 @@ def check_model(model_size: str, cache_dir: Path,
     size_gb = _MODEL_SIZE_GB.get(model_size)
     size_hint = f" (≈{size_gb} ГБ)" if size_gb else ""
 
-    if not snapshots.exists() or not any(snapshots.iterdir()):
+    if not snapshots.exists() or not any(e.is_dir() for e in snapshots.iterdir()):
         return [Issue(
             IssueCode.MODEL_MISSING,
             f"Модель {model_size} не найдена",
@@ -71,25 +71,18 @@ def check_model(model_size: str, cache_dir: Path,
     )]
 
 
-_DLL_TO_CODE = {
-    "cudnn64_9.dll": IssueCode.CUDA_CUDNN_MISSING,
-    "nvJitLink64_12.dll": IssueCode.CUDA_NVJITLINK_MISSING,
-}
-
-
 def check_cuda(nvidia_base: Path) -> List[Issue]:
     """Проверить наличие CUDA DLL. Пустой список = всё на месте."""
     issues: List[Issue] = []
-    for dll_name, pkg_subdir, human, pip_pkg in CUDA_REQUIRED_DLLS:
+    for dll_name, pkg_subdir, human, pip_pkg, code_str in CUDA_REQUIRED_DLLS:
         found = False
         for sub in ("bin", os.path.join("lib", "x64"), "lib"):
             if (nvidia_base / pkg_subdir / sub / dll_name).exists():
                 found = True
                 break
         if not found:
-            code = _DLL_TO_CODE[dll_name]
             issues.append(Issue(
-                code,
+                IssueCode(code_str),
                 f"GPU недоступен: не найден {human}",
                 f"GPU недоступен: не найден {human}. "
                 f"Установите {pip_pkg} или переключитесь на CPU в настройках.",
@@ -111,6 +104,7 @@ def diagnose(model_size: str, device: str, *,
     if cache_dir is None:
         cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
     if nvidia_base is None:
+        # Windows-only путь (приложение только под Windows); .dll проверяется в check_cuda
         nvidia_base = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
 
     issues = check_model(model_size, cache_dir, min_size)
