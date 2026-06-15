@@ -59,7 +59,7 @@ class ModelsManager:
 
         from src.core.diagnostics import check_model
         cache_dir = self.get_whisper_cache_dir()
-        return len(check_model(model_size, cache_dir)) == 0
+        return not check_model(model_size, cache_dir)
 
     def get_whisper_model_info(self, model_size: str) -> Optional[Dict]:
         """

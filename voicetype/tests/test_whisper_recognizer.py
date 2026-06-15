@@ -9,6 +9,10 @@ def test_cuda_failure_does_not_fallback_to_cpu():
     errors = []
     rec.on_error = lambda e: errors.append(e)
 
+    # Патчим WhisperModel в его источнике (faster_whisper), а не в модуле recognizer:
+    # load_model делает локальный `from faster_whisper import WhisperModel` при каждом
+    # вызове (намеренно — чтобы CUDA DLL-пути добавлялись ДО импорта ctranslate2),
+    # поэтому подмена атрибута на модуле-источнике корректно перехватывается импортом.
     with patch("faster_whisper.WhisperModel",
                side_effect=RuntimeError("cudnn missing")) as mock_model:
         ok = rec.load_model()

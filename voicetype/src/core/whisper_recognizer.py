@@ -259,6 +259,7 @@ class WhisperRecognizer:
         except ImportError as e:
             error_msg = f"Библиотека не установлена: {e}"
             logger.error(error_msg)
+            self._last_load_error = error_msg
             if self.on_error:
                 self.on_error(ImportError(error_msg))
             return False
