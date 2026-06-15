@@ -285,14 +285,15 @@ class MainWindow(QMainWindow):
         """
         self._loading_overlay.set_progress(value, maximum)
 
-    def show_loading_error(self, error_text: str):
+    def show_loading_error(self, error_text: str, details: str = ""):
         """
         Показать ошибку загрузки.
 
         Args:
-            error_text: Текст ошибки
+            error_text: Текст ошибки (заголовок)
+            details: Подробности/инструкция (необязательно)
         """
-        self._loading_overlay.show_error(error_text)
+        self._loading_overlay.show_error(error_text, details)
         self.setWindowTitle(f"{APP_NAME} - Ошибка загрузки")
 
     def is_loading(self) -> bool:
