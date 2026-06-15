@@ -43,3 +43,46 @@ def test_check_model_corrupt_incomplete(tmp_path):
     issues = check_model("medium", cache_dir, min_size=1000)
     assert len(issues) == 1
     assert issues[0].code == IssueCode.MODEL_CORRUPT
+
+
+from src.core.diagnostics import check_cuda
+
+
+def _make_nvidia(tmp_path: Path, dlls: list) -> Path:
+    """Создать структуру site-packages/nvidia с заданными DLL (в подпапке bin)."""
+    nvidia_base = tmp_path / "nvidia"
+    layout = {
+        "cudnn64_9.dll": "cudnn",
+        "nvJitLink64_12.dll": "nvjitlink",
+    }
+    for dll in dlls:
+        d = nvidia_base / layout[dll] / "bin"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / dll).write_bytes(b"\0")
+    return nvidia_base
+
+
+def test_check_cuda_all_present(tmp_path):
+    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll", "nvJitLink64_12.dll"])
+    assert check_cuda(nvidia_base) == []
+
+
+def test_check_cuda_cudnn_missing(tmp_path):
+    nvidia_base = _make_nvidia(tmp_path, ["nvJitLink64_12.dll"])  # нет cudnn
+    issues = check_cuda(nvidia_base)
+    codes = [i.code for i in issues]
+    assert IssueCode.CUDA_CUDNN_MISSING in codes
+
+
+def test_check_cuda_nvjitlink_missing(tmp_path):
+    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll"])  # нет nvjitlink
+    issues = check_cuda(nvidia_base)
+    codes = [i.code for i in issues]
+    assert IssueCode.CUDA_NVJITLINK_MISSING in codes
+
+
+def test_check_cuda_both_missing(tmp_path):
+    nvidia_base = tmp_path / "nvidia"  # пусто
+    nvidia_base.mkdir()
+    issues = check_cuda(nvidia_base)
+    assert len(issues) == 2
