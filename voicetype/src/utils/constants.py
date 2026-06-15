@@ -27,9 +27,21 @@ SUPPORTED_LANGUAGES = ["ru", "en"]
 # Recognition engine (only Whisper)
 ENGINE_WHISPER = "whisper"
 
-# Whisper settings (only base, small)
-WHISPER_MODEL_SIZES = ["base", "small"]
+# Whisper settings (small, medium)
+WHISPER_MODEL_SIZES = ["small", "medium"]
 WHISPER_DEFAULT_MODEL = "small"
+
+# Диагностика окружения
+# Минимальный размер model.bin (байты). small ≈ 0.48 ГБ, medium ≈ 1.53 ГБ.
+# Порог 50 МБ надёжно отсекает повреждённые/пустые (.incomplete) файлы.
+MIN_MODEL_BIN_SIZE = 50 * 1024 * 1024
+
+# Требуемые CUDA DLL для device=cuda.
+# Кортеж: (имя DLL, подпапка пакета nvidia, человекочитаемое имя, pip-пакет)
+CUDA_REQUIRED_DLLS = [
+    ("cudnn64_9.dll", "cudnn", "cuDNN", "nvidia-cudnn-cu12"),
+    ("nvJitLink64_12.dll", "nvjitlink", "nvJitLink", "nvidia-nvjitlink-cu12"),
+]
 WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
 WHISPER_DEFAULT_MIN_SILENCE_MS = 300
 WHISPER_DEFAULT_UNLOAD_TIMEOUT = 10  # Секунды до автовыгрузки (0 = отключить)
