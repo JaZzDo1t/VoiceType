@@ -17,10 +17,10 @@ class ModelsManager:
     """
 
     # Информация о моделях Whisper (размер в MB)
-    # Только base, small - убраны tiny, medium и large-v3
+    # Только small, medium - убраны tiny, base и large-v3
     WHISPER_MODEL_INFO = {
-        "base": {"size_mb": 145, "params": "74M", "quality": "medium"},
         "small": {"size_mb": 488, "params": "244M", "quality": "good"},
+        "medium": {"size_mb": 1500, "params": "769M", "quality": "excellent"},
     }
 
     def __init__(self):
@@ -45,34 +45,21 @@ class ModelsManager:
 
     def is_whisper_model_cached(self, model_size: str) -> bool:
         """
-        Проверить, скачана ли модель Whisper.
+        Проверить, скачана ли модель Whisper (и не повреждена).
 
         Args:
-            model_size: Размер модели (base, small)
+            model_size: Размер модели (small, medium)
 
         Returns:
-            True если модель уже скачана в кеш
+            True если модель скачана и цела
         """
         if model_size not in WHISPER_MODEL_SIZES:
             logger.warning(f"Unknown Whisper model size: {model_size}")
             return False
 
+        from src.core.diagnostics import check_model
         cache_dir = self.get_whisper_cache_dir()
-        if not cache_dir.exists():
-            return False
-
-        # faster-whisper использует модели из Systran/faster-whisper-*
-        # Паттерн кеширования: models--Systran--faster-whisper-{size}
-        model_cache_name = f"models--Systran--faster-whisper-{model_size}"
-        model_path = cache_dir / model_cache_name
-
-        if model_path.exists():
-            # Проверяем что там есть файлы модели
-            snapshots = model_path / "snapshots"
-            if snapshots.exists() and any(snapshots.iterdir()):
-                return True
-
-        return False
+        return len(check_model(model_size, cache_dir)) == 0
 
     def get_whisper_model_info(self, model_size: str) -> Optional[Dict]:
         """
