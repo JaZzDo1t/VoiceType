@@ -38,8 +38,8 @@ class WhisperRecognizer:
         text = recognizer.get_final_result()
     """
 
-    # Поддерживаемые размеры моделей Whisper (только base, small)
-    SUPPORTED_MODEL_SIZES = ["base", "small"]
+    # Поддерживаемые размеры моделей Whisper (small, medium)
+    SUPPORTED_MODEL_SIZES = ["small", "medium"]
 
     # Поддерживаемые устройства (cuda предпочтителен, cpu как fallback)
     SUPPORTED_DEVICES = ["cuda", "cpu"]
@@ -58,7 +58,7 @@ class WhisperRecognizer:
         Инициализация распознавателя Whisper.
 
         Args:
-            model_size: Размер модели Whisper (base, small)
+            model_size: Размер модели Whisper (small, medium)
             device: Устройство для вычислений (cuda)
             language: Язык распознавания (ru, en и т.д.)
             sample_rate: Частота дискретизации аудио (по умолчанию 16000)
@@ -116,11 +116,84 @@ class WhisperRecognizer:
         self.on_error: Optional[Callable[[Exception], None]] = None
         self.on_model_loaded: Optional[Callable[[str], None]] = None  # called with model_name after loading
         self.on_model_unloaded: Optional[Callable[[], None]] = None  # called after unloading
+        self._last_load_error: Optional[str] = None  # текст последней ошибки загрузки (для UI)
 
         logger.info(
             f"WhisperRecognizer инициализирован: model={model_size}, "
             f"device={device}, language={language}"
         )
+
+        # Предзагружаем пути к CUDA DLL при инициализации
+        self._add_cuda_dll_paths()
+
+    def _add_cuda_dll_paths(self) -> None:
+        """
+        Добавить пути к CUDA DLL для Windows.
+
+        Нужно вызывать перед каждой загрузкой модели, т.к. после unload()
+        DLL могут стать недоступны.
+
+        Использует два метода для совместимости:
+        1. os.add_dll_directory() - официальный способ для Python 3.8+
+        2. PATH environment variable - для библиотек использующих LoadLibrary напрямую
+        """
+        if os.name != 'nt':  # Только для Windows
+            return
+
+        try:
+            import sys
+
+            # sys.prefix указывает на venv когда он активирован
+            # Это надёжнее чем искать в sys.path
+            site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
+
+            if not os.path.exists(site_packages):
+                logger.warning(f"Не найден site-packages: {site_packages}")
+                return
+
+            logger.debug(f"Используем site-packages: {site_packages}")
+
+            # Пути к nvidia DLL (проверяем разные структуры пакетов)
+            nvidia_paths = []
+            nvidia_base = os.path.join(site_packages, 'nvidia')
+            if os.path.exists(nvidia_base):
+                for pkg in ['cublas', 'cudnn', 'cufft', 'cuda_runtime', 'nvjitlink']:
+                    # Проверяем оба варианта: bin и lib/x64
+                    for subdir in ['bin', os.path.join('lib', 'x64'), 'lib']:
+                        path = os.path.join(nvidia_base, pkg, subdir)
+                        if os.path.exists(path):
+                            nvidia_paths.append(path)
+
+            added_count = 0
+            current_path = os.environ.get('PATH', '')
+            path_additions = []
+
+            for path in nvidia_paths:
+                try:
+                    # Метод 1: os.add_dll_directory (Python 3.8+)
+                    os.add_dll_directory(path)
+                    added_count += 1
+                    logger.debug(f"add_dll_directory: {path}")
+                except Exception as e:
+                    logger.debug(f"add_dll_directory failed для {path}: {e}")
+
+                # Метод 2: добавляем в PATH для LoadLibrary
+                if path not in current_path:
+                    path_additions.append(path)
+
+            # Обновляем PATH
+            if path_additions:
+                new_path = ';'.join(path_additions) + ';' + current_path
+                os.environ['PATH'] = new_path
+                logger.debug(f"Добавлено в PATH: {len(path_additions)} путей")
+
+            if added_count > 0:
+                logger.info(f"Добавлено {added_count} путей к CUDA DLL")
+            else:
+                logger.warning("Не найдены пути к CUDA DLL в nvidia packages")
+
+        except Exception as e:
+            logger.warning(f"Ошибка добавления CUDA DLL путей: {e}")
 
     def load_model(self) -> bool:
         """
@@ -137,6 +210,9 @@ class WhisperRecognizer:
             if self.on_loading_progress:
                 self.on_loading_progress(5)
 
+            # Добавляем пути к CUDA DLL (нужно для Windows после unload/reload)
+            self._add_cuda_dll_paths()
+
             # Загрузка faster-whisper
             logger.info(f"Загрузка модели Whisper ({self.model_size})...")
             from faster_whisper import WhisperModel
@@ -147,24 +223,14 @@ class WhisperRecognizer:
             # GPU: float16, CPU: int8
             compute_type = "float16" if self.device == "cuda" else "int8"
 
-            try:
-                self._model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=compute_type,
-                )
-            except Exception as cuda_error:
-                if self.device == "cuda":
-                    logger.warning(f"CUDA загрузка не удалась: {cuda_error}, пробуем CPU...")
-                    self.device = "cpu"
-                    compute_type = "int8"
-                    self._model = WhisperModel(
-                        self.model_size,
-                        device=self.device,
-                        compute_type=compute_type,
-                    )
-                else:
-                    raise
+            # Без молчаливого CUDA→CPU fallback: при device=cuda и сбое ошибка
+            # пробрасывается наверх, чтобы пользователь увидел честный диагноз.
+            # Переключение на CPU делается осознанно через настройки.
+            self._model = WhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=compute_type,
+            )
 
             if self.on_loading_progress:
                 self.on_loading_progress(60)
@@ -199,6 +265,7 @@ class WhisperRecognizer:
 
         except Exception as e:
             logger.error(f"Ошибка загрузки модели: {e}")
+            self._last_load_error = str(e)
             if self.on_error:
                 self.on_error(e)
             return False
@@ -480,6 +547,10 @@ class WhisperRecognizer:
             return None
 
         try:
+            # Убеждаемся что CUDA DLL пути доступны перед транскрипцией
+            # (CTranslate2 может загружать DLL лениво при первом использовании)
+            self._add_cuda_dll_paths()
+
             # Объединяем все чанки в один массив
             audio_concat = np.concatenate(self._audio_buffer)
 
@@ -609,9 +680,15 @@ class WhisperRecognizer:
                 logger.debug("unload(): модели уже выгружены")
                 return
 
-            # Очищаем модели
+            # Очищаем модели - используем del для вызова деструкторов
+            if self._model is not None:
+                del self._model
             self._model = None
+
+            if self._vad_session is not None:
+                del self._vad_session
             self._vad_session = None
+
             self._vad_state = None
             self._vad_context = None
 
@@ -622,8 +699,18 @@ class WhisperRecognizer:
 
             self._is_loaded = False
 
+            # Агрессивная очистка памяти
             import gc
             gc.collect()
+            gc.collect()  # Второй раз для циклических ссылок
+
+            # Пробуем освободить CUDA память если доступно
+            try:
+                import ctranslate2
+                if hasattr(ctranslate2, 'cuda') and hasattr(ctranslate2.cuda, 'empty_cache'):
+                    ctranslate2.cuda.empty_cache()
+            except Exception:
+                pass
 
             logger.info("Модели Whisper и VAD ONNX выгружены")
 
