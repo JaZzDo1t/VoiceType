@@ -41,7 +41,7 @@ def _ready_recognizer():
     seg = MagicMock()
     seg.text = "привет"
     rec._model.transcribe.return_value = ([seg], MagicMock())
-    rec._vad_session = MagicMock()  # чтобы _detect_speech не считал VAD выгруженным
+    rec._vad._session = MagicMock()  # чтобы detect_speech не считал VAD выгруженным
     return rec
 
 
@@ -50,7 +50,7 @@ def test_process_audio_accumulates_speech_without_transcribing():
     finals = []
     rec.on_final_result = lambda t: finals.append(t)
     # Всё — речь: 5 чанков по 4000 сэмплов
-    with patch.object(rec, "_detect_speech", return_value=True):
+    with patch.object(rec._vad, "detect_speech", return_value=True):
         for _ in range(5):
             rec.process_audio(_pcm(4000))
     assert rec._model.transcribe.call_count == 0   # транскрипции ещё не было
@@ -63,7 +63,7 @@ def test_process_audio_transcribes_after_silence():
     finals = []
     rec.on_final_result = lambda t: finals.append(t)
     # Речь (1 чанк), затем тишина пока не наберётся порог (300мс*16000/1000 = 4800 сэмплов)
-    with patch.object(rec, "_detect_speech", side_effect=[True, False, False]):
+    with patch.object(rec._vad, "detect_speech", side_effect=[True, False, False]):
         rec.process_audio(_pcm(4000))   # речь
         rec.process_audio(_pcm(4000))   # тишина: 4000 < 4800
         rec.process_audio(_pcm(4000))   # тишина: 8000 >= 4800 -> транскрипция
@@ -74,7 +74,7 @@ def test_process_audio_transcribes_after_silence():
 
 def test_process_audio_ignores_silence_before_speech():
     rec = _ready_recognizer()
-    with patch.object(rec, "_detect_speech", return_value=False):
+    with patch.object(rec._vad, "detect_speech", return_value=False):
         for _ in range(3):
             rec.process_audio(_pcm(4000))
     assert rec._model.transcribe.call_count == 0
@@ -83,7 +83,7 @@ def test_process_audio_ignores_silence_before_speech():
 
 def test_get_final_result_transcribes_remaining_buffer():
     rec = _ready_recognizer()
-    with patch.object(rec, "_detect_speech", return_value=True):
+    with patch.object(rec._vad, "detect_speech", return_value=True):
         rec.process_audio(_pcm(16000))            # 1с речи накоплено
     result = rec.get_final_result()
     assert result == "привет"
