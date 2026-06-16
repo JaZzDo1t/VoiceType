@@ -1,7 +1,7 @@
 """Тесты диагностики окружения."""
 from pathlib import Path
 
-from src.core.diagnostics import check_model, check_cuda, diagnose, IssueCode
+from src.utils.diagnostics import check_model, check_cuda, diagnose, IssueCode
 
 
 def _make_model(tmp_path: Path, size: int, *, incomplete: bool = False) -> Path:

@@ -55,7 +55,7 @@ class ModelsManager:
             logger.warning(f"Unknown Whisper model size: {model_size}")
             return False
 
-        from src.core.diagnostics import check_model
+        from src.utils.diagnostics import check_model
         cache_dir = self.get_whisper_cache_dir()
         return not check_model(model_size, cache_dir)
 

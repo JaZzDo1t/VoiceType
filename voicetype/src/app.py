@@ -281,7 +281,7 @@ class VoiceTypeApp(QObject):
         Вызывается из главного потока (_do_load_models / _do_reload_models_then_start),
         поэтому UI-методы зовём напрямую.
         """
-        from src.core.diagnostics import diagnose
+        from src.utils.diagnostics import diagnose
         issues = diagnose(model_name, device)
         if not issues:
             return True
