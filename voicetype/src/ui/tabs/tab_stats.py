@@ -12,7 +12,7 @@ from loguru import logger
 
 import psutil
 from src.data.database import get_database
-from src.utils.system_info import get_process_cpu, get_process_memory, get_vram_usage
+from src.utils.system_info import get_vram_usage
 
 
 class SimpleGraph(QWidget):
@@ -255,18 +255,9 @@ class TabStats(QWidget):
         layout.addLayout(btn_layout)
 
     def _update_current(self):
-        """Обновить текущие значения."""
-        cpu = get_process_cpu()
-        ram = get_process_memory()
-
-        self._cpu_value.setText(f"{cpu:.1f}%")
-        self._cpu_bar.setValue(int(min(cpu, 100)))
-
-        # Показываем RAM в контексте системной памяти
-        self._ram_value.setText(f"{ram:.0f} / {self._system_ram_mb:.0f} МБ")
-        self._ram_bar.setValue(int(min(ram, self._system_ram_mb)))
-
-        # Обновляем VRAM (здесь можно инициализировать baseline)
+        """Обновить VRAM: CPU/RAM приходят через update_graphs по сигналу из app."""
+        # VRAM: уникальная логика — динамическое обнаружение GPU и текст «Нет GPU».
+        # CPU/RAM дублировались с update_graphs — убраны, теперь только через сигнал.
         vram_info = get_vram_usage()
         if vram_info.get("available"):
             self._vram_available = True
