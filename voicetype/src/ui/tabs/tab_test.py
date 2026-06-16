@@ -220,6 +220,10 @@ class TabTest(QWidget):
         """Обновить вкладку."""
         self._update_mic_info()
 
+    def set_loading_status(self, text: str):
+        """Установить текст статуса загрузки."""
+        self._status_label.setText(text)
+
     def set_models_ready(self, ready: bool, model_name: str = ""):
         """
         Установить статус готовности моделей.

@@ -342,6 +342,11 @@ class WhisperRecognizer:
                 self._unload_timer = None
                 logger.debug("Таймер выгрузки отменён")
 
+    @property
+    def is_processing(self) -> bool:
+        """Флаг активной обработки (True = auto-unload заблокирован)."""
+        return self._is_processing
+
     def set_processing(self, is_processing: bool) -> None:
         """
         Установить флаг активной обработки.
@@ -703,15 +708,14 @@ class WhisperRecognizer:
             # Агрессивная очистка памяти
             import gc
             gc.collect()
-            gc.collect()  # Второй раз для циклических ссылок
 
             # Пробуем освободить CUDA память если доступно
             try:
                 import ctranslate2
                 if hasattr(ctranslate2, 'cuda') and hasattr(ctranslate2.cuda, 'empty_cache'):
                     ctranslate2.cuda.empty_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"ctranslate2 empty_cache недоступен: {e}")
 
             logger.info("Модели Whisper и VAD ONNX выгружены")
 

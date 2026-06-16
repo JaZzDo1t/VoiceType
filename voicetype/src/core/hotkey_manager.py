@@ -8,11 +8,7 @@ import time
 from typing import Dict, Callable, Optional, Set, Tuple
 from loguru import logger
 
-from src.utils.constants import DEFAULT_HOTKEY_TOGGLE
-
-# Debounce interval in seconds
-# Increased to 500ms to prevent accidental double-triggers during key release
-HOTKEY_DEBOUNCE_INTERVAL = 0.5  # 500ms
+from src.utils.constants import DEFAULT_HOTKEY_TOGGLE, HOTKEY_DEBOUNCE_INTERVAL
 
 
 class HotkeyManager:

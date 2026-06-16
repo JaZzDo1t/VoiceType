@@ -191,14 +191,3 @@ class TabLogs(QWidget):
     def refresh(self):
         """Обновить вкладку."""
         self._load_logs()
-
-    def append_log(self, message: str):
-        """
-        Добавить сообщение в отображение.
-        Используется для live-логирования.
-        """
-        self._log_view.appendPlainText(message)
-
-        # Прокручиваем вниз
-        scrollbar = self._log_view.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())

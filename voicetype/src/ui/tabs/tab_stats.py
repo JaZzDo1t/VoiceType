@@ -10,8 +10,9 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QFont
 from loguru import logger
 
+import psutil
 from src.data.database import get_database
-from src.utils.system_info import get_process_cpu, get_process_memory, get_memory_usage, get_vram_usage
+from src.utils.system_info import get_process_cpu, get_process_memory, get_vram_usage
 
 
 class SimpleGraph(QWidget):
@@ -177,8 +178,7 @@ class TabStats(QWidget):
 
         self._ram_bar = QProgressBar()
         # Используем системную память как максимум (в МБ)
-        sys_mem = get_memory_usage()
-        self._system_ram_mb = int(sys_mem.get("total_mb", 16000))
+        self._system_ram_mb = int(psutil.virtual_memory().total / (1024 * 1024))
         self._ram_bar.setMaximum(self._system_ram_mb)
         self._ram_bar.setValue(0)
         self._ram_bar.setTextVisible(False)
@@ -323,8 +323,3 @@ class TabStats(QWidget):
         if self._vram_available:
             self._vram_value.setText(f"{vram:.0f} / {self._vram_total_mb:.0f} МБ")
             self._vram_bar.setValue(int(min(vram, self._vram_total_mb)))
-
-    def record_stats(self, cpu: float, ram: float, vram: float = 0):
-        """Записать статистику в БД (устаревший метод, используйте update_graphs)."""
-        self._db.add_stats_entry(cpu, ram, vram)
-        self.update_graphs(cpu, ram, vram)

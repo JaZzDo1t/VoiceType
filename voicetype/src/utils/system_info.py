@@ -85,39 +85,6 @@ def get_microphone_by_id(device_id: str) -> Optional[Dict]:
     return None
 
 
-def get_cpu_usage() -> float:
-    """
-    Получить текущую загрузку CPU (%).
-
-    Returns:
-        Процент загрузки CPU (0.0 - 100.0)
-    """
-    try:
-        return psutil.cpu_percent(interval=0.1)
-    except Exception as e:
-        logger.error(f"Failed to get CPU usage: {e}")
-        return 0.0
-
-
-def get_memory_usage() -> Dict:
-    """
-    Получить информацию об использовании памяти.
-
-    Returns:
-        {"total_mb": float, "used_mb": float, "percent": float}
-    """
-    try:
-        mem = psutil.virtual_memory()
-        return {
-            "total_mb": mem.total / (1024 * 1024),
-            "used_mb": mem.used / (1024 * 1024),
-            "available_mb": mem.available / (1024 * 1024),
-            "percent": mem.percent
-        }
-    except Exception as e:
-        logger.error(f"Failed to get memory usage: {e}")
-        return {"total_mb": 0, "used_mb": 0, "available_mb": 0, "percent": 0}
-
 
 def get_process_memory() -> float:
     """

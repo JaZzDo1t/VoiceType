@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger
 
-from src.utils.constants import WHISPER_MODEL_SIZES, WHISPER_DEFAULT_MODEL
+from src.utils.constants import WHISPER_MODEL_SIZES, WHISPER_DEFAULT_MODEL, HF_HUB_CACHE_DIR
 
 
 class ModelsManager:
@@ -39,9 +39,7 @@ class ModelsManager:
         Returns:
             Path к директории кеша
         """
-        # Hugging Face Hub кеш
-        hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-        return hf_cache
+        return HF_HUB_CACHE_DIR
 
     def is_whisper_model_cached(self, model_size: str) -> bool:
         """

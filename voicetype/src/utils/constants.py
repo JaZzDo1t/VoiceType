@@ -11,6 +11,7 @@ APP_AUTHOR = "VoiceType Team"
 
 # Paths
 APP_DATA_DIR = Path(os.getenv("APPDATA", "")) / APP_NAME
+HF_HUB_CACHE_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 CONFIG_FILE = APP_DATA_DIR / "config.yaml"
 DATABASE_FILE = APP_DATA_DIR / "voicetype.db"
 LOGS_DIR = APP_DATA_DIR / "logs"
@@ -83,7 +84,7 @@ DEFAULT_TYPING_DELAY = 0.01  # Задержка между символами (�
 LAYOUT_SWITCH_DELAY = 0.1   # Задержка после смены раскладки (секунды)
 
 # Hotkeys
-HOTKEY_DEBOUNCE_INTERVAL = 0.3  # Интервал debounce для хоткеев (секунды)
+HOTKEY_DEBOUNCE_INTERVAL = 0.5  # Интервал debounce для хоткеев (секунды)
 
 # UI sizes
 MIC_COMBO_MIN_WIDTH = 250  # Минимальная ширина комбобокса микрофона

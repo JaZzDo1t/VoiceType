@@ -480,7 +480,7 @@ class VoiceTypeApp(QObject):
         """Перезагрузить модели и начать запись."""
         # Показываем статус загрузки в test tab
         self._main_window.tab_test.set_models_ready(False)
-        self._main_window.tab_test._status_label.setText("Загрузка модели...")
+        self._main_window.tab_test.set_loading_status("Загрузка модели...")
 
         # Загружаем в главном потоке через singleShot (избегаем crash с CTranslate2)
         QTimer.singleShot(50, self._do_reload_models_then_start)
@@ -538,7 +538,7 @@ class VoiceTypeApp(QObject):
 
         # ВАЖНО: Включаем режим обработки - блокирует auto-unload
         # (может быть уже True если вызвано из _do_reload_models_then_start)
-        if not self._recognizer._is_processing:
+        if not self._recognizer.is_processing:
             self._recognizer.set_processing(True)
         logger.debug("_do_start_recording: set_processing done")
 
@@ -726,8 +726,7 @@ class VoiceTypeApp(QObject):
 
     def _on_hotkey_triggered(self, action: str):
         """Обработчик нажатия хоткея (в UI потоке)."""
-        import time
-        logger.info(f"_on_hotkey_triggered(action={action}) at {time.time():.3f}")
+        logger.info(f"_on_hotkey_triggered(action={action})")
         if action == "toggle":
             self.toggle_recording()
 
@@ -846,7 +845,7 @@ class VoiceTypeApp(QObject):
         logger.info("Opening settings from loading screen")
         # Переключаемся на основной интерфейс и показываем вкладку настроек
         self._main_window.set_loading(False)
-        self._main_window.tabs.setCurrentWidget(self._main_window.tab_main)
+        self._main_window.select_tab_by_name("main")
         self._main_window.show()
         self._main_window.activateWindow()
 

@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
-from src.utils.constants import MIN_MODEL_BIN_SIZE, CUDA_REQUIRED_DLLS
+from src.utils.constants import MIN_MODEL_BIN_SIZE, CUDA_REQUIRED_DLLS, HF_HUB_CACHE_DIR
 
 # Приблизительные размеры моделей для текста диагноза
 _MODEL_SIZE_GB = {"small": 0.5, "medium": 1.5}
@@ -102,7 +102,7 @@ def diagnose(model_size: str, device: str, *,
     параметры нужны для тестов.
     """
     if cache_dir is None:
-        cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        cache_dir = HF_HUB_CACHE_DIR
     if nvidia_base is None:
         # Windows-only путь (приложение только под Windows); .dll проверяется в check_cuda
         nvidia_base = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
