@@ -61,7 +61,7 @@ def _make_nvidia(tmp_path: Path, dlls: list) -> Path:
     nvidia_base = tmp_path / "nvidia"
     layout = {
         "cudnn64_9.dll": "cudnn",
-        "nvJitLink64_12.dll": "nvjitlink",
+        "nvJitLink_120_0.dll": "nvjitlink",
     }
     for dll in dlls:
         d = nvidia_base / layout[dll] / "bin"
@@ -71,12 +71,12 @@ def _make_nvidia(tmp_path: Path, dlls: list) -> Path:
 
 
 def test_check_cuda_all_present(tmp_path):
-    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll", "nvJitLink64_12.dll"])
+    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll", "nvJitLink_120_0.dll"])
     assert check_cuda(nvidia_base) == []
 
 
 def test_check_cuda_cudnn_missing(tmp_path):
-    nvidia_base = _make_nvidia(tmp_path, ["nvJitLink64_12.dll"])  # нет cudnn
+    nvidia_base = _make_nvidia(tmp_path, ["nvJitLink_120_0.dll"])  # нет cudnn
     issues = check_cuda(nvidia_base)
     codes = [i.code for i in issues]
     assert IssueCode.CUDA_CUDNN_MISSING in codes
@@ -98,7 +98,7 @@ def test_check_cuda_both_missing(tmp_path):
 
 def test_diagnose_ok_cuda(tmp_path):
     cache_dir = _make_model(tmp_path, size=2000)
-    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll", "nvJitLink64_12.dll"])
+    nvidia_base = _make_nvidia(tmp_path, ["cudnn64_9.dll", "nvJitLink_120_0.dll"])
     issues = diagnose("medium", "cuda", cache_dir=cache_dir,
                       nvidia_base=nvidia_base, min_size=1000)
     assert issues == []

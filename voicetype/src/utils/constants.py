@@ -40,7 +40,7 @@ MIN_MODEL_BIN_SIZE = 50 * 1024 * 1024
 # Кортеж: (имя DLL, подпапка пакета nvidia, человекочитаемое имя, pip-пакет, код проблемы)
 CUDA_REQUIRED_DLLS = [
     ("cudnn64_9.dll", "cudnn", "cuDNN", "nvidia-cudnn-cu12", "cuda_cudnn_missing"),
-    ("nvJitLink64_12.dll", "nvjitlink", "nvJitLink", "nvidia-nvjitlink-cu12", "cuda_nvjitlink_missing"),
+    ("nvJitLink_120_0.dll", "nvjitlink", "nvJitLink", "nvidia-nvjitlink-cu12", "cuda_nvjitlink_missing"),
 ]
 WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
 WHISPER_DEFAULT_MIN_SILENCE_MS = 300
