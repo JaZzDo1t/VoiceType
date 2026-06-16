@@ -14,6 +14,7 @@ from typing import Optional, Callable, List
 from loguru import logger
 
 from src.utils.constants import SAMPLE_RATE
+from src.core.audio_buffer import AudioBuffer
 
 # URL для скачивания ONNX модели Silero VAD
 SILERO_VAD_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
@@ -95,13 +96,8 @@ class WhisperRecognizer:
         self._is_loaded = False
         self._lock = threading.Lock()
 
-        # Буфер аудио для накопления до паузы
-        self._audio_buffer: List[np.ndarray] = []
-        self._speech_started = False
-        self._silence_samples = 0
-        self._silence_threshold_samples = int(
-            (min_silence_duration_ms / 1000) * sample_rate
-        )
+        # Буфер аудио с триггером транскрипции по тишине
+        self._buffer = AudioBuffer(sample_rate, min_silence_duration_ms)
 
         # Для автоматической выгрузки
         self._last_activity_time: float = 0
@@ -417,32 +413,16 @@ class WhisperRecognizer:
                 # Определение речи/тишины через VAD
                 is_speech = self._detect_speech(audio_np)
 
-                if is_speech:
-                    # Речь обнаружена - добавляем в буфер
-                    self._audio_buffer.append(audio_np)
-                    self._speech_started = True
-                    self._silence_samples = 0
-                    logger.debug(f"VAD: речь обнаружена, буфер: {len(self._audio_buffer)} чанков")
+                if is_speech and self.on_partial_result:
+                    self.on_partial_result("...")
 
-                    # Отправляем частичный результат (индикация что идёт запись)
-                    if self.on_partial_result and len(self._audio_buffer) > 0:
-                        self.on_partial_result("...")
-
-                elif self._speech_started:
-                    # Тишина после речи - накапливаем паузу
-                    self._audio_buffer.append(audio_np)
-                    self._silence_samples += len(audio_np)
-
-                    # Проверяем достигнут ли порог тишины
-                    if self._silence_samples >= self._silence_threshold_samples:
-                        # Пауза достигнута - транскрибируем
-                        result = self._transcribe_buffer()
-                        self._reset_buffer()
-
-                        if result and self.on_final_result:
-                            self.on_final_result(result)
-
-                        return result
+                if self._buffer.add(audio_np, is_speech):
+                    result = self._transcribe(self._buffer.get_audio())
+                    self._buffer.reset()
+                    self._reset_vad_state()
+                    if result and self.on_final_result:
+                        self.on_final_result(result)
+                    return result
 
                 return None
 
@@ -542,53 +522,27 @@ class WhisperRecognizer:
             logger.warning(f"Ошибка VAD: {e}")
             return True  # При ошибке считаем что есть речь
 
-    def _transcribe_buffer(self) -> Optional[str]:
-        """
-        Транскрибировать накопленный аудио буфер.
-
-        Returns:
-            Распознанный текст или None
-        """
-        if not self._audio_buffer or self._model is None:
+    def _transcribe(self, audio_concat: np.ndarray) -> Optional[str]:
+        """Транскрибировать переданный аудио-массив. Вернуть текст или None."""
+        if audio_concat is None or len(audio_concat) == 0 or self._model is None:
             return None
-
         try:
-            # Убеждаемся что CUDA DLL пути доступны перед транскрипцией
-            # (CTranslate2 может загружать DLL лениво при первом использовании)
             self._add_cuda_dll_paths()
-
-            # Объединяем все чанки в один массив
-            audio_concat = np.concatenate(self._audio_buffer)
-
-            # Минимальная длина аудио (0.5 секунды)
             min_samples = int(0.5 * self.sample_rate)
             if len(audio_concat) < min_samples:
                 logger.debug("Аудио слишком короткое для транскрипции")
                 return None
-
             logger.debug(f"Транскрипция {len(audio_concat) / self.sample_rate:.2f}с аудио...")
-
-            # Транскрипция через faster-whisper
             segments, info = self._model.transcribe(
-                audio_concat,
-                language=self.language,
-                beam_size=5,
-                best_of=5,
-                temperature=0.0,
-                vad_filter=False,  # Мы уже используем свой VAD
-                without_timestamps=True,
+                audio_concat, language=self.language, beam_size=5, best_of=5,
+                temperature=0.0, vad_filter=False, without_timestamps=True,
             )
-
-            # Собираем текст из сегментов
             texts = [segment.text.strip() for segment in segments]
             result = " ".join(texts).strip()
-
             if result:
                 logger.info(f"Транскрипция: {result[:100]}...")
                 return result
-
             return None
-
         except Exception as e:
             logger.error(f"Ошибка транскрипции: {e}")
             if self.on_error:
@@ -597,10 +551,7 @@ class WhisperRecognizer:
 
     def _reset_buffer(self) -> None:
         """Сбросить буфер аудио и состояние VAD."""
-        self._audio_buffer.clear()
-        self._speech_started = False
-        self._silence_samples = 0
-        # Сбрасываем state VAD ONNX для нового сегмента
+        self._buffer.reset()
         self._reset_vad_state()
 
     def _reset_vad_state(self) -> None:
@@ -630,25 +581,23 @@ class WhisperRecognizer:
         Returns:
             Распознанный текст или None
         """
-        logger.debug(f"get_final_result called: is_loaded={self._is_loaded}, buffer_len={len(self._audio_buffer)}")
+        logger.debug(f"get_final_result called: is_loaded={self._is_loaded}, has_audio={self._buffer.has_audio}")
 
         if not self._is_loaded:
             logger.warning("get_final_result: модель не загружена!")
             return None
 
         with self._lock:
-            if not self._audio_buffer:
+            if not self._buffer.has_audio:
                 logger.debug("get_final_result: буфер пуст, нечего транскрибировать")
                 return None
 
-            buffer_duration = sum(len(chunk) for chunk in self._audio_buffer) / self.sample_rate
-            logger.info(f"get_final_result: транскрибируем {buffer_duration:.2f}с аудио из {len(self._audio_buffer)} чанков")
-
-            result = self._transcribe_buffer()
+            audio = self._buffer.get_audio()
+            logger.info(
+                f"get_final_result: транскрибируем {len(audio) / self.sample_rate:.2f}с аудио"
+            )
+            result = self._transcribe(audio)
             self._reset_buffer()
-
-            # НЕ вызываем callback здесь - результат возвращается напрямую
-            # callback используется только при автоматической транскрипции (по паузе)
 
             return result
 
@@ -699,9 +648,7 @@ class WhisperRecognizer:
             self._vad_context = None
 
             # Очищаем буфер
-            self._audio_buffer.clear()
-            self._speech_started = False
-            self._silence_samples = 0
+            self._buffer.reset()
 
             self._is_loaded = False
 

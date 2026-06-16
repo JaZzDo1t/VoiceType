@@ -55,7 +55,7 @@ def test_process_audio_accumulates_speech_without_transcribing():
             rec.process_audio(_pcm(4000))
     assert rec._model.transcribe.call_count == 0   # транскрипции ещё не было
     assert finals == []
-    assert len(rec._audio_buffer) == 5             # всё накоплено
+    assert rec._buffer.has_audio is True           # всё накоплено
 
 
 def test_process_audio_transcribes_after_silence():
@@ -69,7 +69,7 @@ def test_process_audio_transcribes_after_silence():
         rec.process_audio(_pcm(4000))   # тишина: 8000 >= 4800 -> транскрипция
     assert rec._model.transcribe.call_count == 1
     assert finals == ["привет"]
-    assert len(rec._audio_buffer) == 0             # буфер сброшен после транскрипции
+    assert rec._buffer.has_audio is False          # буфер сброшен после транскрипции
 
 
 def test_process_audio_ignores_silence_before_speech():
@@ -78,7 +78,7 @@ def test_process_audio_ignores_silence_before_speech():
         for _ in range(3):
             rec.process_audio(_pcm(4000))
     assert rec._model.transcribe.call_count == 0
-    assert len(rec._audio_buffer) == 0             # тишина до речи не копится
+    assert rec._buffer.has_audio is False          # тишина до речи не копится
 
 
 def test_get_final_result_transcribes_remaining_buffer():
@@ -88,4 +88,4 @@ def test_get_final_result_transcribes_remaining_buffer():
     result = rec.get_final_result()
     assert result == "привет"
     assert rec._model.transcribe.call_count == 1
-    assert len(rec._audio_buffer) == 0
+    assert rec._buffer.has_audio is False
