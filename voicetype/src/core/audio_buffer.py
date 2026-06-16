@@ -11,6 +11,7 @@ import numpy as np
 
 class AudioBuffer:
     def __init__(self, sample_rate: int, min_silence_duration_ms: int):
+        self._sample_rate = sample_rate
         self._chunks: List[np.ndarray] = []
         self._speech_started = False
         self._silence_samples = 0
@@ -44,3 +45,9 @@ class AudioBuffer:
         self._chunks.clear()
         self._speech_started = False
         self._silence_samples = 0
+
+    def set_silence_threshold(self, min_silence_duration_ms: int) -> None:
+        """Обновить порог тишины (не сбрасывая накопленное)."""
+        self._silence_threshold_samples = int(
+            (min_silence_duration_ms / 1000) * self._sample_rate
+        )

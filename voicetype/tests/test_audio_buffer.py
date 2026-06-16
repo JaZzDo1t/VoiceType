@@ -36,3 +36,10 @@ def test_reset_clears_state():
     assert len(buf.get_audio()) == 0
     # после reset тишина снова игнорируется (speech_started сброшен)
     assert buf.add(_chunk(4000), is_speech=False) is False
+
+
+def test_set_silence_threshold_changes_trigger():
+    buf = AudioBuffer(sample_rate=16000, min_silence_duration_ms=300)  # порог 4800
+    buf.set_silence_threshold(100)  # порог 1600
+    buf.add(_chunk(4000), is_speech=True)
+    assert buf.add(_chunk(2000), is_speech=False) is True  # silence=2000 >= 1600

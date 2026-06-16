@@ -704,9 +704,7 @@ class WhisperRecognizer:
             raise ValueError("Минимальная длительность паузы должна быть >= 100мс")
 
         self.min_silence_duration_ms = duration_ms
-        self._silence_threshold_samples = int(
-            (duration_ms / 1000) * self.sample_rate
-        )
+        self._buffer.set_silence_threshold(duration_ms)
         logger.info(f"Минимальная пауза установлена: {duration_ms}мс")
 
     def get_model_info(self) -> dict:
