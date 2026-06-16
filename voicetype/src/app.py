@@ -18,6 +18,7 @@ from src.data.config import get_config
 from src.data.database import get_database
 from src.data.models_manager import get_models_manager
 from src.core.audio_capture import AudioCapture
+from src.core.model_loader import ModelLoader
 from src.core.whisper_recognizer import WhisperRecognizer
 from src.core.output_manager import OutputManager
 from src.core.hotkey_manager import HotkeyManager
@@ -83,6 +84,9 @@ class VoiceTypeApp(QObject):
         self._stats_timer: Optional[QTimer] = None
         self._level_timer: Optional[QTimer] = None
 
+        # Помощники
+        self._models = ModelLoader(self)
+
     def initialize(self) -> bool:
         """
         Инициализировать приложение.
@@ -112,7 +116,7 @@ class VoiceTypeApp(QObject):
             self._tray_icon.show()
 
             # Загружаем модели в фоне
-            self._load_models_async()
+            self._models._load_models_async()
 
             # Инициализируем остальные компоненты
             self._init_output_manager()
@@ -197,139 +201,6 @@ class VoiceTypeApp(QObject):
 
         # TabStats - подключаем сигнал для обновления графиков
         self._stats_collected_signal.connect(self._main_window.tab_stats.update_graphs)
-
-    def _unload_models(self) -> None:
-        """Выгрузить текущие модели для освобождения памяти."""
-        if self._recognizer is not None:
-            if hasattr(self._recognizer, 'unload'):
-                self._recognizer.unload()
-            self._recognizer = None
-
-        gc.collect()
-        logger.debug("Models unloaded, memory freed")
-
-        # Сбрасываем baseline VRAM после выгрузки
-        reset_vram_baseline()
-
-        # Обновляем UI статус (thread-safe через сигналы)
-        self._whisper_status_signal.emit(False, "")
-        self._vad_status_signal.emit(False)
-
-    def _create_recognizer(self) -> bool:
-        """
-        Create Whisper recognizer.
-
-        Returns:
-            True if recognizer created successfully
-        """
-        return self._create_whisper_recognizer()
-
-    def _create_whisper_recognizer(self) -> bool:
-        """
-        Create Whisper recognizer with VAD.
-
-        Returns:
-            True if successful (Whisper loads lazily on first process_audio)
-        """
-        model_size = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-        device = self._config.get("audio.whisper.device", "cuda")
-        language = self._config.get("audio.language", "ru")
-        vad_threshold = self._config.get("audio.whisper.vad_threshold", WHISPER_DEFAULT_VAD_THRESHOLD)
-        min_silence_ms = self._config.get("audio.whisper.min_silence_ms", WHISPER_DEFAULT_MIN_SILENCE_MS)
-        unload_timeout = self._config.get("audio.whisper.unload_timeout", WHISPER_DEFAULT_UNLOAD_TIMEOUT)
-
-        # Обновляем статус загрузки
-        self._loading_status_signal.emit("Подготовка Whisper", model_size)
-
-        self._recognizer = WhisperRecognizer(
-            model_size=model_size,
-            device=device,
-            language=language,
-            vad_threshold=vad_threshold,
-            min_silence_duration_ms=min_silence_ms,
-            unload_timeout_sec=unload_timeout,
-        )
-
-        # Connect callbacks
-        self._recognizer.on_partial_result = lambda t: self._partial_result_signal.emit(t)
-        self._recognizer.on_final_result = lambda t: self._final_result_signal.emit(t)
-
-        # Connect model status callbacks (thread-safe via signals)
-        self._recognizer.on_model_loaded = lambda model_name: self._on_recognizer_model_loaded(model_name)
-        self._recognizer.on_model_unloaded = lambda: self._on_recognizer_model_unloaded()
-
-        # Ошибки во время работы (вызывается из recognition-потока) → UI через сигнал
-        self._recognizer.on_error = lambda e: self._error_signal.emit(
-            "Ошибка распознавания", f"{type(e).__name__}: {e}")
-
-        # Connect loading progress callback
-        self._recognizer.on_loading_progress = lambda progress: self._main_window.set_loading_progress(progress, 100)
-
-        logger.info(f"Whisper recognizer created: model={model_size}, device={device}, language={language}")
-        return True  # Whisper loads lazily
-
-    def _load_models_async(self):
-        """Запланировать загрузку моделей после запуска event loop."""
-        # Используем QTimer.singleShot чтобы загрузить модели ПОСЛЕ того как
-        # event loop запустится. Загрузка будет в главном потоке, что избегает
-        # crash от CTranslate2 + threading + Qt event loop.
-        QTimer.singleShot(50, self._do_load_models)
-
-    def _check_environment(self, model_name: str, device: str) -> bool:
-        """Проверить окружение перед загрузкой. True = всё ок; иначе показать диагноз и False.
-
-        Вызывается из главного потока (_do_load_models / _do_reload_models_then_start),
-        поэтому UI-методы зовём напрямую.
-        """
-        from src.utils.diagnostics import diagnose
-        issues = diagnose(model_name, device)
-        if not issues:
-            return True
-        title = issues[0].title
-        detail = "\n".join(i.detail for i in issues)
-        logger.error(f"Диагностика выявила проблемы: {detail}")
-        self._main_window.show_loading_error(title, detail)
-        self._tray_icon.show_notification("VoiceType - Ошибка", title)
-        self._tray_icon.set_state(TRAY_STATE_ERROR)
-        return False
-
-    def _do_load_models(self):
-        """Фактическая загрузка моделей (в главном потоке)."""
-        from PyQt6.QtCore import QCoreApplication
-
-        try:
-            # Выгружаем старые модели перед загрузкой новых
-            self._unload_models()
-            QCoreApplication.processEvents()
-
-            # Создаём Whisper recognizer
-            if not self._create_recognizer():
-                self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
-                return
-
-            model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-            QCoreApplication.processEvents()
-
-            # Проактивная диагностика окружения перед загрузкой
-            device = self._config.get("audio.whisper.device", "cuda")
-            if not self._check_environment(model_name, device):
-                self._models_loaded = False
-                return
-
-            # Загружаем модели
-            logger.info(f"Загрузка моделей при старте...")
-            if self._recognizer and self._recognizer.load_model():
-                # Модели загружены успешно
-                self._models_loaded_signal.emit(TRAY_STATE_READY, model_name)
-                logger.info(f"Whisper и VAD загружены: {model_name}")
-            else:
-                # Ошибка загрузки
-                self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
-                logger.error("Не удалось загрузить модели")
-
-        except Exception as e:
-            logger.error(f"Failed to load models: {e}")
-            self._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
 
     def _init_output_manager(self):
         """Инициализировать менеджер вывода."""
@@ -463,7 +334,7 @@ class VoiceTypeApp(QObject):
         # Whisper: проверяем что recognizer создан
         if not self._recognizer:
             logger.info("Re-creating Whisper recognizer...")
-            if not self._create_whisper_recognizer():
+            if not self._models._create_whisper_recognizer():
                 logger.error("Failed to create Whisper recognizer")
                 self._tray_icon.show_notification("Ошибка", "Не удалось создать Whisper")
                 return
@@ -471,57 +342,10 @@ class VoiceTypeApp(QObject):
         # Проверяем загружены ли модели (могли выгрузиться по таймауту)
         if not self._recognizer.is_loaded():
             logger.info("Models unloaded, reloading asynchronously...")
-            self._reload_models_then_start()
+            self._models._reload_models_then_start()
             return
 
         self._do_start_recording()
-
-    def _reload_models_then_start(self):
-        """Перезагрузить модели и начать запись."""
-        # Показываем статус загрузки в test tab
-        self._main_window.tab_test.set_models_ready(False)
-        self._main_window.tab_test.set_loading_status("Загрузка модели...")
-
-        # Загружаем в главном потоке через singleShot (избегаем crash с CTranslate2)
-        QTimer.singleShot(50, self._do_reload_models_then_start)
-
-    def _do_reload_models_then_start(self):
-        """Фактическая перезагрузка моделей (в главном потоке)."""
-        from PyQt6.QtCore import QCoreApplication
-
-        try:
-            model_name = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-            logger.info(f"Перезагрузка моделей: {model_name}")
-
-            device = self._config.get("audio.whisper.device", "cuda")
-            if not self._check_environment(model_name, device):
-                if self._recognizer is not None:
-                    self._recognizer.set_processing(False)
-                return
-
-            # ВАЖНО: Сначала блокируем auto-unload, потом отменяем таймер
-            # Это предотвращает race condition если таймер уже сработал
-            self._recognizer.set_processing(True)
-            self._recognizer.cancel_unload_timer()
-
-            QCoreApplication.processEvents()
-
-            if self._recognizer.load_model():
-                # Модели загружены - сигналим UI
-                self._whisper_status_signal.emit(True, model_name)
-                self._vad_status_signal.emit(True)
-                logger.info("Модели перезагружены, запускаем запись")
-                # Запускаем запись (set_processing уже True)
-                self._do_start_recording()
-            else:
-                logger.error("Не удалось перезагрузить модели")
-                self._recognizer.set_processing(False)  # Разрешаем auto-unload
-                self._main_window.tab_test.set_models_ready(True)
-
-        except Exception as e:
-            logger.error(f"Ошибка перезагрузки моделей: {e}")
-            self._recognizer.set_processing(False)  # Разрешаем auto-unload
-            self._main_window.tab_test.set_models_ready(True)
 
     def _do_start_recording(self):
         """Внутренний метод - непосредственный старт записи (модели уже загружены)."""
@@ -776,7 +600,7 @@ class VoiceTypeApp(QObject):
         self._models_loaded = False
         self._tray_icon.set_state(TRAY_STATE_LOADING)
         self._main_window.set_loading(True)
-        self._load_models_async()
+        self._models._load_models_async()
 
     def _on_whisper_model_changed(self, model: str):
         """Whisper модель изменена - нужно перезагрузить."""
@@ -784,7 +608,7 @@ class VoiceTypeApp(QObject):
         self._models_loaded = False
         self._tray_icon.set_state(TRAY_STATE_LOADING)
         self._main_window.set_loading(True)
-        self._load_models_async()
+        self._models._load_models_async()
 
     def _on_vad_threshold_changed(self, threshold: float):
         """Порог VAD изменён - применяем в реальном времени."""
@@ -838,7 +662,7 @@ class VoiceTypeApp(QObject):
         self._main_window.loading_overlay.reset()
         self._models_loaded = False
         self._tray_icon.set_state(TRAY_STATE_LOADING)
-        self._load_models_async()
+        self._models._load_models_async()
 
     def _on_loading_settings(self):
         """Открыть настройки из экрана загрузки."""
@@ -880,7 +704,7 @@ class VoiceTypeApp(QObject):
             self._hotkey_manager.stop_listening()
 
         # Выгружаем модели для освобождения памяти
-        self._unload_models()
+        self._models._unload_models()
 
         # Скрываем tray icon
         if self._tray_icon:
