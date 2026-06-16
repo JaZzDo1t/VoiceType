@@ -58,8 +58,10 @@ class VadProcessor:
         logger.debug("Silero VAD ONNX загружен (без PyTorch!)")
 
     def unload(self) -> None:
-        """Выгрузить ONNX-сессию для освобождения памяти."""
+        """Выгрузить ONNX-сессию и состояние для освобождения памяти."""
         self._session = None
+        self._state = None
+        self._context = None
 
     def detect_speech(self, audio_np: np.ndarray) -> bool:
         """True, если в чанке обнаружена речь."""
