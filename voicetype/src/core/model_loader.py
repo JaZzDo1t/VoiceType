@@ -191,7 +191,7 @@ class ModelLoader:
                 self._app._vad_status_signal.emit(True)
                 logger.info("Модели перезагружены, запускаем запись")
                 # Запускаем запись (set_processing уже True)
-                self._app._do_start_recording()
+                self._app._recording._do_start_recording()
             else:
                 logger.error("Не удалось перезагрузить модели")
                 self._app._recognizer.set_processing(False)  # Разрешаем auto-unload

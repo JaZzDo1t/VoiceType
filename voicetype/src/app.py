@@ -5,9 +5,6 @@ VoiceType - Application Controller
 """
 import sys
 import gc
-import threading
-import queue
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import QApplication
@@ -19,6 +16,7 @@ from src.data.database import get_database
 from src.data.models_manager import get_models_manager
 from src.core.audio_capture import AudioCapture
 from src.core.model_loader import ModelLoader
+from src.core.recording_session import RecordingSession
 from src.core.whisper_recognizer import WhisperRecognizer
 from src.core.output_manager import OutputManager
 from src.core.hotkey_manager import HotkeyManager
@@ -28,11 +26,8 @@ from src.utils.logger import setup_logger
 from src.utils.autostart import Autostart
 from src.utils.system_info import get_process_cpu, get_process_memory, get_vram_usage, reset_vram_baseline
 from src.utils.constants import (
-    TRAY_STATE_READY, TRAY_STATE_RECORDING,
-    TRAY_STATE_LOADING, TRAY_STATE_ERROR,
+    TRAY_STATE_READY, TRAY_STATE_LOADING, TRAY_STATE_ERROR,
     STATS_INTERVAL_SECONDS,
-    WHISPER_DEFAULT_MODEL, WHISPER_DEFAULT_VAD_THRESHOLD,
-    WHISPER_DEFAULT_MIN_SILENCE_MS, WHISPER_DEFAULT_UNLOAD_TIMEOUT
 )
 
 
@@ -73,12 +68,8 @@ class VoiceTypeApp(QObject):
         self._main_window: Optional[MainWindow] = None
 
         # Состояние
-        self._is_recording = False
         self._is_initialized = False
         self._models_loaded = False  # Флаг загрузки моделей
-        self._recognition_thread: Optional[threading.Thread] = None
-        self._session_text = ""
-        self._session_start: Optional[datetime] = None
 
         # Таймеры
         self._stats_timer: Optional[QTimer] = None
@@ -86,6 +77,7 @@ class VoiceTypeApp(QObject):
 
         # Помощники
         self._models = ModelLoader(self)
+        self._recording = RecordingSession(self)
 
     def initialize(self) -> bool:
         """
@@ -310,8 +302,8 @@ class VoiceTypeApp(QObject):
         Переключить состояние записи (toggle).
         Если записывает - остановить, если не записывает - начать.
         """
-        logger.info(f"toggle_recording() called, current state: is_recording={self._is_recording}")
-        if self._is_recording:
+        logger.info(f"toggle_recording() called, current state: is_recording={self._recording.is_recording()}")
+        if self._recording.is_recording():
             logger.info("toggle_recording: calling stop_recording()")
             self.stop_recording()
         else:
@@ -320,155 +312,11 @@ class VoiceTypeApp(QObject):
 
     def start_recording(self):
         """Начать запись и распознавание."""
-        if self._is_recording:
-            logger.warning("Already recording")
-            return
-
-        # Если модели ещё ни разу не загружались - ждём
-        if not self._models_loaded:
-            logger.warning("Models not loaded yet, ignoring start_recording")
-            return
-
-        logger.info("Starting recording...")
-
-        # Whisper: проверяем что recognizer создан
-        if not self._recognizer:
-            logger.info("Re-creating Whisper recognizer...")
-            if not self._models._create_whisper_recognizer():
-                logger.error("Failed to create Whisper recognizer")
-                self._tray_icon.show_notification("Ошибка", "Не удалось создать Whisper")
-                return
-
-        # Проверяем загружены ли модели (могли выгрузиться по таймауту)
-        if not self._recognizer.is_loaded():
-            logger.info("Models unloaded, reloading asynchronously...")
-            self._models._reload_models_then_start()
-            return
-
-        self._do_start_recording()
-
-    def _do_start_recording(self):
-        """Внутренний метод - непосредственный старт записи (модели уже загружены)."""
-        logger.debug("_do_start_recording: начало")
-
-        if self._is_recording:
-            logger.debug("_do_start_recording: уже записываем, выход")
-            return
-
-        self._is_recording = True
-        self._session_text = ""
-        self._session_start = datetime.now()
-        logger.debug("_do_start_recording: флаги установлены")
-
-        # ВАЖНО: Включаем режим обработки - блокирует auto-unload
-        # (может быть уже True если вызвано из _do_reload_models_then_start)
-        if not self._recognizer.is_processing:
-            self._recognizer.set_processing(True)
-        logger.debug("_do_start_recording: set_processing done")
-
-        # Сбрасываем recognizer
-        logger.debug("_do_start_recording: вызов reset()...")
-        self._recognizer.reset()
-        logger.debug("_do_start_recording: reset() завершён")
-
-        # Запускаем захват аудио
-        logger.debug("_do_start_recording: создание AudioCapture...")
-        mic_id = self._config.get("audio.microphone_id", "default")
-        self._audio_capture = AudioCapture(device_id=mic_id)
-
-        # Устанавливаем порог шума из конфига
-        noise_floor = self._config.get("audio.noise_floor", 800)
-        self._audio_capture.set_noise_floor(noise_floor)
-        logger.debug("_do_start_recording: AudioCapture создан, запуск...")
-
-        if not self._audio_capture.start():
-            self._is_recording = False
-            self._tray_icon.show_notification("Ошибка", "Не удалось запустить микрофон")
-            logger.error("_do_start_recording: не удалось запустить микрофон")
-            return
-
-        logger.debug("_do_start_recording: микрофон запущен, создание recognition thread...")
-
-        # Запускаем поток распознавания
-        self._recognition_thread = threading.Thread(target=self._recognition_loop, daemon=True)
-        self._recognition_thread.start()
-        logger.debug("_do_start_recording: recognition thread запущен")
-
-        # Запускаем таймер обновления уровня
-        self._level_timer = QTimer()
-        self._level_timer.timeout.connect(self._update_audio_level)
-        self._level_timer.start(50)  # 20 fps
-
-        # Обновляем UI
-        self._tray_icon.set_state(TRAY_STATE_RECORDING)
-
-        # Обновляем test tab
-        self._main_window.tab_test.set_models_ready(True)
-
-        logger.info("Recording started successfully")
+        self._recording.start()
 
     def stop_recording(self):
         """Остановить запись."""
-        if not self._is_recording:
-            logger.debug("stop_recording() called but not recording, ignoring")
-            return
-
-        logger.info(f"stop_recording() called, setting _is_recording=False")
-
-        self._is_recording = False
-
-        # Останавливаем таймер уровня
-        if self._level_timer:
-            self._level_timer.stop()
-            self._level_timer = None
-
-        # Останавливаем захват аудио
-        if self._audio_capture:
-            self._audio_capture.stop()
-
-        # Получаем финальный результат
-        if self._recognizer:
-            final = self._recognizer.get_final_result()
-            if final:
-                self._process_final_text(final)
-
-            # ВАЖНО: Выключаем режим обработки - разрешает auto-unload
-            self._recognizer.set_processing(False)
-
-        # Сохраняем в историю
-        if self._session_text and self._session_start:
-            self._db.add_history_entry(
-                started_at=self._session_start,
-                ended_at=datetime.now(),
-                text=self._session_text,
-                language=self._config.get("audio.language", "ru")
-            )
-
-        # Обновляем UI
-        self._tray_icon.set_state(TRAY_STATE_READY)
-        self._recognition_finished_signal.emit()
-
-        logger.info("Recording stopped")
-
-    def _recognition_loop(self):
-        """Цикл распознавания (в отдельном потоке)."""
-        audio_queue = self._audio_capture.get_audio_queue()
-
-        while self._is_recording:
-            try:
-                audio_data = audio_queue.get(timeout=0.1)
-                self._recognizer.process_audio(audio_data)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Recognition error: {e}")
-                break
-
-    def _update_audio_level(self):
-        """Обновить уровень аудио."""
-        if self._audio_capture:
-            level = self._audio_capture.get_level()
-            self._update_level_signal.emit(level)
+        self._recording.stop()
 
     def _on_level_update(self, level: float):
         """Обработчик обновления уровня (в UI потоке)."""
@@ -492,10 +340,7 @@ class VoiceTypeApp(QObject):
         logger.debug(f"Processing final text: '{text[:50]}...'")
 
         # Добавляем к сессии
-        if self._session_text:
-            self._session_text += " " + text
-        else:
-            self._session_text = text
+        self._recording.append_session_text(text)
 
         # Выводим текст
         if not self._main_window.tab_test.is_testing():
@@ -692,7 +537,7 @@ class VoiceTypeApp(QObject):
         logger.info("Shutting down VoiceType...")
 
         # Останавливаем запись если идёт
-        if self._is_recording:
+        if self._recording.is_recording():
             self.stop_recording()
 
         # Останавливаем таймеры
