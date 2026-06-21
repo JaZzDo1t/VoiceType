@@ -112,6 +112,7 @@ Key settings:
 | `audio.whisper.unload_timeout` | seconds, 0 = disable | 10 |
 | `output.mode` | "keyboard", "clipboard" | "keyboard" |
 | `hotkeys.toggle_recording` | key combo string | "ctrl+shift+s" |
+| `ui.recording_cursor` | true/false (красный курсор при записи) | true |
 
 **Note:** Default values in constants.py may differ from UI defaults (e.g., VAD threshold is 0.5 in constants but 0.7 in UI slider). The UI values take precedence for user-facing defaults.
 
