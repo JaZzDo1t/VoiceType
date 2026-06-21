@@ -14,6 +14,7 @@ from loguru import logger
 
 from src.core.audio_capture import AudioCapture
 from src.utils.constants import TRAY_STATE_READY, TRAY_STATE_RECORDING
+from src.utils.recording_cursor import get_recording_cursor
 from PyQt6.QtCore import QTimer
 
 
@@ -124,6 +125,7 @@ class RecordingSession:
 
         # Обновляем UI
         self._app._tray_icon.set_state(TRAY_STATE_RECORDING)
+        get_recording_cursor().activate()
 
         # Обновляем test tab
         self._app._main_window.tab_test.set_models_ready(True)
@@ -169,6 +171,7 @@ class RecordingSession:
 
         # Обновляем UI
         self._app._tray_icon.set_state(TRAY_STATE_READY)
+        get_recording_cursor().deactivate()
         self._app._recognition_finished_signal.emit()
 
         logger.info("Recording stopped")
@@ -246,6 +249,7 @@ class RecordingSession:
         if restore_tray:
             self._app._tray_icon.set_state(TRAY_STATE_READY)
 
+        get_recording_cursor().deactivate()
         self._app._recognition_finished_signal.emit()
 
     def append_session_text(self, text: str):
