@@ -118,6 +118,19 @@ def _create_red_cursor(shape: str, size: int) -> int:
     ]
     user32.CreateIconIndirect.restype = wintypes.HICON
     user32.CreateIconIndirect.argtypes = [ctypes.POINTER(ICONINFO)]
+    # ВАЖНО: на 64-битной Windows хендлы — указатели. Без argtypes ctypes
+    # пытается уложить 64-битный хендл в C int → OverflowError. Задаём сигнатуры
+    # всем функциям, принимающим/возвращающим хендлы.
+    user32.GetDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    gdi32.CreateBitmap.restype = wintypes.HBITMAP
+    gdi32.CreateBitmap.argtypes = [
+        ctypes.c_int, ctypes.c_int, wintypes.UINT, wintypes.UINT, ctypes.c_void_p,
+    ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
 
     ppv_bits = ctypes.c_void_p()
     hdc = user32.GetDC(0)
@@ -155,13 +168,23 @@ def _set_system_cursor(hcursor: int, ocr_id: int) -> None:
     каждый вызов передаётся свежесозданный хендл (не переиспользуется).
     """
     import ctypes
-    ctypes.windll.user32.SetSystemCursor(hcursor, ocr_id)
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.SetSystemCursor.restype = wintypes.BOOL
+    user32.SetSystemCursor.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    user32.SetSystemCursor(hcursor, ocr_id)
 
 
 def _restore_default_cursors() -> None:
     """Вернуть настоящие курсоры пользователя (перезагрузка из реестра)."""
     import ctypes
-    ctypes.windll.user32.SystemParametersInfoW(_SPI_SETCURSORS, 0, None, 0)
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.SystemParametersInfoW.restype = wintypes.BOOL
+    user32.SystemParametersInfoW.argtypes = [
+        wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT,
+    ]
+    user32.SystemParametersInfoW(_SPI_SETCURSORS, 0, None, 0)
 
 
 class RecordingCursor:
