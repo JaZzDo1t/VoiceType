@@ -107,8 +107,11 @@ class VoiceTypeApp(QObject):
             self._tray_icon.set_state(TRAY_STATE_LOADING)
             self._tray_icon.show()
 
-            # Загружаем модели в фоне
-            self._models._load_models_async()
+            # Загружаем модели в фоне.
+            # ВАЖНО: с задержкой, чтобы hotkey listener (QTimer.singleShot 100мс ниже)
+            # поднялся РАНЬШЕ блокирующей загрузки модели. Тогда нажатие хоткея сразу
+            # после старта ловит мгновенный захват, а не висит за загрузкой модели.
+            self._models._load_models_async(delay_ms=600)
 
             # Инициализируем остальные компоненты
             self._init_output_manager()

@@ -33,7 +33,7 @@ class TabMain(QWidget):
     output_mode_changed = pyqtSignal(str)     # keyboard/clipboard
     theme_changed = pyqtSignal(str)           # dark/light
     autostart_changed = pyqtSignal(bool)      # enabled
-    whisper_model_changed = pyqtSignal(str)   # base/small
+    whisper_model_changed = pyqtSignal(str)   # small/medium
     vad_threshold_changed = pyqtSignal(float) # 0.0-1.0
     noise_floor_changed = pyqtSignal(int)     # 200-2000
 
@@ -57,8 +57,8 @@ class TabMain(QWidget):
         whisper_model_layout = QHBoxLayout()
         whisper_model_layout.addWidget(QLabel("Модель Whisper:"))
         self._whisper_model_combo = QComboBox()
-        self._whisper_model_combo.addItem("base (~150MB)", "base")
         self._whisper_model_combo.addItem("small (~500MB) - рекомендуемая", "small")
+        self._whisper_model_combo.addItem("medium (~1.5GB) - высокое качество", "medium")
         self._whisper_model_combo.setMinimumWidth(280)
         whisper_model_layout.addWidget(self._whisper_model_combo)
         whisper_model_layout.addStretch()
@@ -88,12 +88,12 @@ class TabMain(QWidget):
         self._vad_threshold_slider = QSlider(Qt.Orientation.Horizontal)
         self._vad_threshold_slider.setMinimum(30)  # 0.3
         self._vad_threshold_slider.setMaximum(90)  # 0.9
-        self._vad_threshold_slider.setValue(70)    # 0.7 default
+        self._vad_threshold_slider.setValue(80)    # 0.8 default
         self._vad_threshold_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self._vad_threshold_slider.setTickInterval(10)
         self._vad_threshold_slider.setMinimumWidth(150)
         vad_threshold_layout.addWidget(self._vad_threshold_slider)
-        self._vad_threshold_label = QLabel("0.7")
+        self._vad_threshold_label = QLabel("0.8")
         self._vad_threshold_label.setMinimumWidth(30)
         vad_threshold_layout.addWidget(self._vad_threshold_label)
         vad_threshold_layout.addStretch()
@@ -179,6 +179,10 @@ class TabMain(QWidget):
         self._autostart_check = QCheckBox("Запускать при старте Windows")
         system_layout.addWidget(self._autostart_check)
 
+        # Запуск свёрнутой
+        self._start_minimized_check = QCheckBox("Запускать свёрнутой в трей")
+        system_layout.addWidget(self._start_minimized_check)
+
         # Тема
         theme_layout = QHBoxLayout()
         theme_layout.addWidget(QLabel("Тема:"))
@@ -202,8 +206,8 @@ class TabMain(QWidget):
 
         # Whisper model
         whisper_model = self._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-        # Проверяем, что модель в допустимых пределах (base, small)
-        if whisper_model not in ["base", "small"]:
+        # Проверяем, что модель в допустимых пределах (small, medium)
+        if whisper_model not in ["small", "medium"]:
             whisper_model = "small"  # default
         index = self._whisper_model_combo.findData(whisper_model)
         if index >= 0:
@@ -229,6 +233,10 @@ class TabMain(QWidget):
         autostart = self._config.get("system.autostart", False)
         self._autostart_check.setChecked(autostart)
 
+        # Запуск свёрнутой
+        start_minimized = self._config.get("system.start_minimized", False)
+        self._start_minimized_check.setChecked(start_minimized)
+
         # Тема
         theme = self._config.get("system.theme", THEME_DARK)
         index = self._theme_combo.findData(theme)
@@ -236,7 +244,7 @@ class TabMain(QWidget):
             self._theme_combo.setCurrentIndex(index)
 
         # VAD threshold
-        vad_threshold = self._config.get("audio.whisper.vad_threshold", 0.7)
+        vad_threshold = self._config.get("audio.whisper.vad_threshold", 0.8)
         slider_value = int(vad_threshold * 100)
         self._vad_threshold_slider.setValue(slider_value)
         self._vad_threshold_label.setText(f"{vad_threshold:.1f}")
@@ -253,6 +261,7 @@ class TabMain(QWidget):
         self._lang_combo.currentIndexChanged.connect(self._on_lang_changed)
         self._output_btn_group.buttonToggled.connect(self._on_output_changed)
         self._autostart_check.toggled.connect(self._on_autostart_changed)
+        self._start_minimized_check.toggled.connect(self._on_start_minimized_changed)
         self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         self._vad_threshold_slider.valueChanged.connect(self._on_vad_threshold_changed)
         self._noise_floor_slider.valueChanged.connect(self._on_noise_floor_changed)
@@ -307,6 +316,11 @@ class TabMain(QWidget):
         self._config.set("system.autostart", checked)
         self.autostart_changed.emit(checked)
         logger.debug(f"Autostart changed: {checked}")
+
+    def _on_start_minimized_changed(self, checked):
+        """Обработчик изменения запуска свёрнутой."""
+        self._config.set("system.start_minimized", checked)
+        logger.debug(f"Start minimized changed: {checked}")
 
     def _on_theme_changed(self, index):
         """Обработчик изменения темы."""

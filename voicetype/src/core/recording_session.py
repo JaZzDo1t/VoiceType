@@ -21,6 +21,7 @@ class RecordingSession:
     def __init__(self, app):
         self._app = app
         self._is_recording = threading.Event()          # K2: было bool
+        self._model_ready = threading.Event()           # модель загружена → поток распознавания может работать
         self._recognition_thread: Optional[threading.Thread] = None
         self._session_text = ""
         self._session_start: Optional[datetime] = None
@@ -29,33 +30,45 @@ class RecordingSession:
         return self._is_recording.is_set()
 
     def start(self):
-        """Начать запись и распознавание."""
+        """Начать запись и распознавание.
+
+        Захват аудио стартует НЕМЕДЛЕННО (микрофон + красный индикатор), не
+        дожидаясь модели. Если модель не загружена — загрузка идёт в фоне
+        (в главном потоке), а поток распознавания ждёт `_model_ready`; звук
+        тем временем копится в неограниченной очереди AudioCapture и не теряется.
+        """
         if self._is_recording.is_set():
             logger.warning("Already recording")
             return
 
-        # Если модели ещё ни разу не загружались - ждём
-        if not self._app._models_loaded:
-            logger.warning("Models not loaded yet, ignoring start_recording")
-            return
-
         logger.info("Starting recording...")
 
-        # Whisper: проверяем что recognizer создан
+        # Whisper: создаём recognizer лениво, если ещё не создан
+        # (холодный старт — до завершения предзагрузки моделей)
         if not self._app._recognizer:
-            logger.info("Re-creating Whisper recognizer...")
+            logger.info("Creating Whisper recognizer...")
             if not self._app._models._create_whisper_recognizer():
                 logger.error("Failed to create Whisper recognizer")
                 self._app._tray_icon.show_notification("Ошибка", "Не удалось создать Whisper")
                 return
 
-        # Проверяем загружены ли модели (могли выгрузиться по таймауту)
-        if not self._app._recognizer.is_loaded():
-            logger.info("Models unloaded, reloading asynchronously...")
-            self._app._models._reload_models_then_start()
+        # Сбрасываем флаг готовности и СРАЗУ стартуем захват + поток распознавания.
+        # _do_start_recording() внутри зовёт set_processing(True) — блокирует
+        # авто-выгрузку и снимает гонку с таймером до проверки is_loaded().
+        self._model_ready.clear()
+        self._do_start_recording()
+
+        # Если _do_start_recording не смог стартовать (например, микрофон) — выходим
+        if not self._is_recording.is_set():
             return
 
-        self._do_start_recording()
+        if self._app._recognizer.is_loaded():
+            # Модель уже готова — распознаём в реальном времени
+            self._model_ready.set()
+        else:
+            # Модель выгружена/не загружена — грузим в фоне, поток распознавания ждёт
+            logger.info("Models not loaded, loading in background while capturing...")
+            self._app._models._load_then_signal_ready()
 
     def _do_start_recording(self):
         """Внутренний метод - непосредственный старт записи (модели уже загружены)."""
@@ -70,8 +83,8 @@ class RecordingSession:
         self._session_start = datetime.now()
         logger.debug("_do_start_recording: флаги установлены")
 
-        # ВАЖНО: Включаем режим обработки - блокирует auto-unload
-        # (может быть уже True если вызвано из _do_reload_models_then_start)
+        # ВАЖНО: Включаем режим обработки - блокирует auto-unload и отменяет
+        # таймер выгрузки ДО того, как мы проверим is_loaded() в start().
         if not self._app._recognizer.is_processing:
             self._app._recognizer.set_processing(True)
         logger.debug("_do_start_recording: set_processing done")
@@ -161,8 +174,21 @@ class RecordingSession:
         logger.info("Recording stopped")
 
     def _recognition_loop(self):
-        """Цикл распознавания (в отдельном потоке)."""
+        """Цикл распознавания (в отдельном потоке).
+
+        Сначала ждём готовности модели (`_model_ready`) — пока она грузится в
+        главном потоке, аудио копится в неограниченной очереди AudioCapture.
+        Затем сливаем накопленное и работаем в реальном времени.
+        """
         audio_queue = self._app._audio_capture.get_audio_queue()
+
+        # Ждём загрузки модели. Звук тем временем буферизуется в очереди.
+        while self._is_recording.is_set() and not self._model_ready.is_set():
+            self._model_ready.wait(timeout=0.1)
+
+        # Запись могли остановить (или загрузка провалилась) во время ожидания
+        if not self._is_recording.is_set():
+            return
 
         while self._is_recording.is_set():
             try:
@@ -179,6 +205,48 @@ class RecordingSession:
         if self._app._audio_capture:
             level = self._app._audio_capture.get_level()
             self._app._update_level_signal.emit(level)
+
+    def signal_model_ready(self):
+        """Сообщить потоку распознавания, что модель загружена.
+
+        Вызывается ModelLoader из главного потока после успешной фоновой загрузки.
+        Поток распознавания выходит из ожидания и начинает сливать накопленный звук.
+        """
+        self._model_ready.set()
+
+    def abort_load_failure(self, detail: str = "", restore_tray: bool = True, notify: bool = True):
+        """Отменить запись из-за провала фоновой загрузки модели.
+
+        Гасит захват и поток распознавания, отбрасывает буфер, снимает блокировку
+        авто-выгрузки. Если детальную ошибку (и трей ERROR) уже показала диагностика —
+        вызывать с restore_tray=False, notify=False.
+        """
+        logger.error(f"Фоновая загрузка не удалась, запись отменена: {detail}")
+
+        self._is_recording.clear()
+        self._model_ready.clear()
+
+        # Останавливаем таймер уровня
+        if self._app._level_timer:
+            self._app._level_timer.stop()
+            self._app._level_timer = None
+
+        # Останавливаем захват аудио
+        if self._app._audio_capture:
+            self._app._audio_capture.stop()
+
+        # Снимаем блокировку авто-выгрузки и отбрасываем накопленный буфер
+        if self._app._recognizer:
+            self._app._recognizer.set_processing(False)
+            self._app._recognizer.reset()
+
+        if notify and detail:
+            self._app._error_signal.emit("Ошибка загрузки", detail)
+
+        if restore_tray:
+            self._app._tray_icon.set_state(TRAY_STATE_READY)
+
+        self._app._recognition_finished_signal.emit()
 
     def append_session_text(self, text: str):
         """Добавить текст к сессии (вызывается из app._process_final_text)."""

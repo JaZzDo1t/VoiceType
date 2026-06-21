@@ -92,17 +92,23 @@ class ModelLoader:
         logger.info(f"Whisper recognizer created: model={model_size}, device={device}, language={language}")
         return True  # Whisper loads lazily
 
-    def _load_models_async(self):
-        """Запланировать загрузку моделей после запуска event loop."""
+    def _load_models_async(self, delay_ms: int = 50):
+        """Запланировать загрузку моделей после запуска event loop.
+
+        delay_ms — задержка перед загрузкой. При старте приложения используем
+        бОльшую задержку, чтобы hotkey listener успел подняться РАНЬШЕ блокирующей
+        загрузки модели: тогда нажатие сразу после запуска ловит мгновенный захват,
+        а не висит за загрузкой.
+        """
         # Используем QTimer.singleShot чтобы загрузить модели ПОСЛЕ того как
         # event loop запустится. Загрузка будет в главном потоке, что избегает
         # crash от CTranslate2 + threading + Qt event loop.
-        QTimer.singleShot(50, self._do_load_models)
+        QTimer.singleShot(delay_ms, self._do_load_models)
 
     def _check_environment(self, model_name: str, device: str) -> bool:
         """Проверить окружение перед загрузкой. True = всё ок; иначе показать диагноз и False.
 
-        Вызывается из главного потока (_do_load_models / _do_reload_models_then_start),
+        Вызывается из главного потока (_do_load_models / _do_load_then_signal_ready),
         поэтому UI-методы зовём напрямую.
         """
         from src.utils.diagnostics import diagnose
@@ -122,6 +128,14 @@ class ModelLoader:
         from PyQt6.QtCore import QCoreApplication
 
         try:
+            # Если запись уже идёт (холодный старт — пользователь нажал хоткей
+            # раньше предзагрузки), модель грузит сам путь записи через
+            # _load_then_signal_ready(). Не выгружаем и не пересоздаём recognizer,
+            # чтобы не сломать активную сессию.
+            if self._app._recording.is_recording():
+                logger.info("Предзагрузка пропущена: запись уже идёт (модель грузит путь записи)")
+                return
+
             # Выгружаем старые модели перед загрузкой новых
             self._unload_models()
             QCoreApplication.processEvents()
@@ -155,49 +169,69 @@ class ModelLoader:
             logger.error(f"Failed to load models: {e}")
             self._app._models_loaded_signal.emit(TRAY_STATE_ERROR, "")
 
-    def _reload_models_then_start(self):
-        """Перезагрузить модели и начать запись."""
+    def _load_then_signal_ready(self):
+        """Загрузить модели в фоне (главный поток) и сообщить о готовности записи.
+
+        Вызывается из RecordingSession.start(), когда захват уже идёт, а модель
+        ещё не загружена. Загрузка — в главном потоке (требование CTranslate2+Qt),
+        запись и захват аудио продолжаются параллельно.
+        """
         # Показываем статус загрузки в test tab
         self._app._main_window.tab_test.set_models_ready(False)
         self._app._main_window.tab_test.set_loading_status("Загрузка модели...")
 
         # Загружаем в главном потоке через singleShot (избегаем crash с CTranslate2)
-        QTimer.singleShot(50, self._do_reload_models_then_start)
+        QTimer.singleShot(50, self._do_load_then_signal_ready)
 
-    def _do_reload_models_then_start(self):
-        """Фактическая перезагрузка моделей (в главном потоке)."""
+    def _do_load_then_signal_ready(self):
+        """Фактическая фоновая загрузка (в главном потоке), параллельно записи."""
         from PyQt6.QtCore import QCoreApplication
 
+        rec = self._app._recording
+        recognizer = self._app._recognizer
         try:
             model_name = self._app._config.get("audio.whisper.model", WHISPER_DEFAULT_MODEL)
-            logger.info(f"Перезагрузка моделей: {model_name}")
-
             device = self._app._config.get("audio.whisper.device", "cuda")
+            logger.info(f"Фоновая загрузка моделей: {model_name}")
+
+            # Диагностика окружения (сама показывает детальную ошибку + трей ERROR)
             if not self._check_environment(model_name, device):
-                if self._app._recognizer is not None:
-                    self._app._recognizer.set_processing(False)
+                rec.abort_load_failure(restore_tray=False, notify=False)
                 return
 
             # ВАЖНО: Сначала блокируем auto-unload, потом отменяем таймер
             # Это предотвращает race condition если таймер уже сработал
-            self._app._recognizer.set_processing(True)
-            self._app._recognizer.cancel_unload_timer()
+            recognizer.set_processing(True)
+            recognizer.cancel_unload_timer()
 
             QCoreApplication.processEvents()
 
-            if self._app._recognizer.load_model():
-                # Модели загружены - сигналим UI
+            if recognizer.load_model():
+                # Тихо обновляем статус (без тоста "готов" на каждой перезагрузке)
                 self._app._whisper_status_signal.emit(True, model_name)
                 self._app._vad_status_signal.emit(True)
-                logger.info("Модели перезагружены, запускаем запись")
-                # Запускаем запись (set_processing уже True)
-                self._app._recording._do_start_recording()
+                self._app._main_window.tab_test.set_models_ready(True, model_name)
+
+                # Первая загрузка за сессию — снимаем стартовый экран загрузки.
+                # Трей НЕ трогаем: может идти запись (красный индикатор).
+                if not self._app._models_loaded:
+                    self._app._models_loaded = True
+                    self._app._main_window.set_loading(False, model_name)
+
+                # Сообщаем потоку распознавания; если запись успели остановить —
+                # разрешаем авто-выгрузку (модель остаётся загруженной для след. раза).
+                if rec.is_recording():
+                    logger.info("Модели загружены, распознавание догоняет накопленный звук")
+                    rec.signal_model_ready()
+                else:
+                    recognizer.set_processing(False)
             else:
-                logger.error("Не удалось перезагрузить модели")
-                self._app._recognizer.set_processing(False)  # Разрешаем auto-unload
-                self._app._main_window.tab_test.set_models_ready(True)
+                logger.error("Не удалось загрузить модели в фоне")
+                rec.abort_load_failure(
+                    detail=(getattr(recognizer, "_last_load_error", "") or "Не удалось загрузить модель распознавания."),
+                    restore_tray=True, notify=True,
+                )
 
         except Exception as e:
-            logger.error(f"Ошибка перезагрузки моделей: {e}")
-            self._app._recognizer.set_processing(False)  # Разрешаем auto-unload
-            self._app._main_window.tab_test.set_models_ready(True)
+            logger.error(f"Ошибка фоновой загрузки моделей: {e}")
+            rec.abort_load_failure(detail=f"{type(e).__name__}: {e}", restore_tray=True, notify=True)

@@ -43,7 +43,7 @@ CUDA_REQUIRED_DLLS = [
     ("cudnn64_9.dll", "cudnn", "cuDNN", "nvidia-cudnn-cu12", "cuda_cudnn_missing"),
     ("nvJitLink_120_0.dll", "nvjitlink", "nvJitLink", "nvidia-nvjitlink-cu12", "cuda_nvjitlink_missing"),
 ]
-WHISPER_DEFAULT_VAD_THRESHOLD = 0.5
+WHISPER_DEFAULT_VAD_THRESHOLD = 0.8
 WHISPER_DEFAULT_MIN_SILENCE_MS = 300
 WHISPER_DEFAULT_UNLOAD_TIMEOUT = 10  # Секунды до автовыгрузки (0 = отключить)
 

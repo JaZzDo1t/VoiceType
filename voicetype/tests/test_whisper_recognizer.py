@@ -37,9 +37,13 @@ def _ready_recognizer():
                             min_silence_duration_ms=300, sample_rate=16000)
     rec._is_loaded = True
     rec._model = MagicMock()
-    # _model.transcribe возвращает один сегмент с текстом "привет"
+    # _model.transcribe возвращает один сегмент с текстом "привет".
+    # no_speech_prob/avg_logprob — числа уверенной речи: фильтр антигаллюцинаций
+    # (_transcribe) отбрасывает сегмент только при no_speech_prob>0.6 И avg_logprob<-0.5.
     seg = MagicMock()
     seg.text = "привет"
+    seg.no_speech_prob = 0.1
+    seg.avg_logprob = -0.2
     rec._model.transcribe.return_value = ([seg], MagicMock())
     rec._vad._session = MagicMock()  # чтобы detect_speech не считал VAD выгруженным
     return rec

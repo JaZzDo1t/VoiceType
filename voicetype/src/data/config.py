@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
         "whisper": {
             "model": "small",
             "device": "cuda",
-            "vad_threshold": 0.7
+            "vad_threshold": 0.8
         }
     },
     "output": {
@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     },
     "system": {
         "autostart": False,
+        "start_minimized": False,
         "theme": THEME_DARK
     },
     "internal": {

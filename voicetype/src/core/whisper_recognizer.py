@@ -336,8 +336,31 @@ class WhisperRecognizer:
             segments, info = self._model.transcribe(
                 audio_concat, language=self.language, beam_size=5, best_of=5,
                 temperature=0.0, vad_filter=False, without_timestamps=True,
+                # Антигаллюцинации Whisper (титры YouTube на тишине/шуме):
+                # не переносим контекст между сегментами — иначе галлюцинация
+                # "заражает" следующие; и режем неуверенные/не-речевые сегменты.
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                log_prob_threshold=-1.0,
+                compression_ratio_threshold=2.4,
             )
-            texts = [segment.text.strip() for segment in segments]
+            texts = []
+            for segment in segments:
+                # Фильтр по уверенности сегмента: типичные галлюцинации идут
+                # с высоким no_speech_prob и низким avg_logprob.
+                no_speech_prob = getattr(segment, "no_speech_prob", 0.0)
+                avg_logprob = getattr(segment, "avg_logprob", 0.0)
+                if no_speech_prob > 0.6 and avg_logprob < -0.5:
+                    logger.debug(
+                        f"Сегмент отброшен (no_speech={no_speech_prob:.2f}, "
+                        f"logprob={avg_logprob:.2f}): {segment.text.strip()[:60]}"
+                    )
+                    continue
+                text = segment.text.strip()
+                if self._is_hallucination(text):
+                    logger.debug(f"Сегмент-галлюцинация отброшен: {text[:60]}")
+                    continue
+                texts.append(text)
             result = " ".join(texts).strip()
             if result:
                 logger.info(f"Транскрипция: {result[:100]}...")
@@ -348,6 +371,33 @@ class WhisperRecognizer:
             if self.on_error:
                 self.on_error(e)
             return None
+
+    # Характерные маркеры галлюцинаций Whisper (титры из обучающих данных).
+    # Сравнение регистронезависимое по вхождению подстроки.
+    _HALLUCINATION_MARKERS = (
+        "редактор субтитров",
+        "корректор",
+        "субтитры сделал",
+        "субтитры создавал",
+        "субтитры подготовил",
+        "продолжение следует",
+        "спасибо за просмотр",
+        "спасибо за внимание",
+        "подписывайтесь на канал",
+        "ставьте лайк",
+        "subscribe",
+        "thanks for watching",
+        "amara.org",
+        "субтитры и перевод",
+        "редактор",
+    )
+
+    def _is_hallucination(self, text: str) -> bool:
+        """Проверить, похож ли текст на типичную галлюцинацию Whisper."""
+        if not text:
+            return False
+        lowered = text.lower()
+        return any(marker in lowered for marker in self._HALLUCINATION_MARKERS)
 
     def _reset_buffer(self) -> None:
         """Сбросить буфер аудио и состояние VAD."""
