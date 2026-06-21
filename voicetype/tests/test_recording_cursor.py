@@ -21,7 +21,7 @@ def _config(enabled=True):
 def test_activate_sets_both_system_cursors():
     cur = RecordingCursor()
     with patch.object(rc, "get_config", return_value=_config(True)), \
-         patch.object(rc, "_create_red_cursor", side_effect=[111, 222]) as mk, \
+         patch.object(rc, "_create_cursor_with_dot", side_effect=[111, 222]) as mk, \
          patch.object(rc, "_set_system_cursor") as setc, \
          patch.object(rc, "_restore_default_cursors"):
         cur.activate()
@@ -35,7 +35,7 @@ def test_activate_sets_both_system_cursors():
 def test_activate_respects_config_switch_off():
     cur = RecordingCursor()
     with patch.object(rc, "get_config", return_value=_config(False)), \
-         patch.object(rc, "_create_red_cursor") as mk, \
+         patch.object(rc, "_create_cursor_with_dot") as mk, \
          patch.object(rc, "_set_system_cursor") as setc:
         cur.activate()
     assert cur._active is False
@@ -46,7 +46,7 @@ def test_activate_respects_config_switch_off():
 def test_activate_is_idempotent():
     cur = RecordingCursor()
     with patch.object(rc, "get_config", return_value=_config(True)), \
-         patch.object(rc, "_create_red_cursor", side_effect=[1, 2, 3, 4]), \
+         patch.object(rc, "_create_cursor_with_dot", side_effect=[1, 2, 3, 4]), \
          patch.object(rc, "_set_system_cursor") as setc, \
          patch.object(rc, "_restore_default_cursors"):
         cur.activate()
@@ -82,7 +82,7 @@ def test_restore_always_calls_winapi_and_clears_active():
 def test_activate_swallows_winapi_errors():
     cur = RecordingCursor()
     with patch.object(rc, "get_config", return_value=_config(True)), \
-         patch.object(rc, "_create_red_cursor", side_effect=RuntimeError("winapi boom")), \
+         patch.object(rc, "_create_cursor_with_dot", side_effect=RuntimeError("winapi boom")), \
          patch.object(rc, "_set_system_cursor"), \
          patch.object(rc, "_restore_default_cursors"):
         cur.activate()  # не должно бросить исключение
