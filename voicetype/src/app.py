@@ -25,6 +25,7 @@ from src.ui.main_window import MainWindow
 from src.utils.logger import setup_logger
 from src.utils.autostart import Autostart
 from src.utils.system_info import get_process_cpu, get_process_memory, get_vram_usage, reset_vram_baseline
+from src.utils.recording_cursor import get_recording_cursor
 from src.utils.constants import (
     TRAY_STATE_READY, TRAY_STATE_LOADING, TRAY_STATE_ERROR,
     STATS_INTERVAL_SECONDS,
@@ -91,6 +92,10 @@ class VoiceTypeApp(QObject):
 
             # Конфигурация
             self._config.load()
+
+            # Страховка: если прошлый запуск упал во время записи и оставил
+            # красный курсор — сбрасываем его на старте.
+            get_recording_cursor().restore()
 
             # База данных
             self._db.initialize()
@@ -542,6 +547,9 @@ class VoiceTypeApp(QObject):
         # Останавливаем запись если идёт
         if self._recording.is_recording():
             self.stop_recording()
+
+        # Гарантируем возврат обычного курсора
+        get_recording_cursor().restore()
 
         # Останавливаем таймеры
         if self._stats_timer:
